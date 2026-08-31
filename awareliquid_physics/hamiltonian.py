@@ -42,6 +42,8 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
+from .operator_potential import OperatorPotential
+
 
 def _energy_mlp(dim: int, hidden_dim: int, depth: int) -> nn.Sequential:
     """A smooth (Tanh) MLP R^dim -> R for a scalar energy. Tanh, not ReLU: the
@@ -200,6 +202,97 @@ class MLPFieldHead(nn.Module):
         q, p = q0, p0
         for _ in range(int(steps)):
             q, p = self.step(q, p, dt)
+            qs.append(q)
+            ps.append(p)
+        return torch.stack(qs), torch.stack(ps)
+
+
+class OperatorHamiltonianHead(nn.Module):
+    """v0.2 (M2): separable H(q,p|ctx) = T(p) + V_operator(q|ctx) with a
+    SPECTRAL-OPERATOR potential (FNO) instead of a pointwise MLP.
+
+    q, p are (..., N, dim) node states; N is ARBITRARY (resolution-invariant).
+      * T(p)      — per-node kinetic MLP, summed over nodes: T = sum_n T_mlp(p_n).
+                    Same weights at every node -> translation invariant.
+      * V(q|ctx)  — OperatorPotential (spectral FNO stack + FiLM conditioning),
+                    summed pointwise energy with translation + resolution
+                    invariance and C^2 smoothness (Tanh).
+    Dynamics: velocity-Verlet (kick-drift-kick), UNCHANGED — energy conservation
+    remains an architectural property for whatever T, V the network learns.
+    """
+
+    def __init__(self, dim: int, width: int = 32, modes: int = 12,
+                 fno_depth: int = 4, context_dim: int = 0,
+                 hidden_dim: int = 64, t_depth: int = 2, reflect_pad: int = 8):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.T = _energy_mlp(dim, hidden_dim, t_depth)                 # per-node T(p)
+        self.V = OperatorPotential(dim, width=width, modes=modes,
+                                   depth=fno_depth, context_dim=context_dim,
+                                   reflect_pad=reflect_pad)
+
+    # -- energy & its gradients (the conservative vector field) ---------------
+
+    def energy(self, q: torch.Tensor, p: torch.Tensor,
+               context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """H(q,p|ctx) = sum_n T(p_n) + V(q|ctx).  (..., N, dim) -> (...,) scalar.
+        Arbitrary leading dims are flattened (e.g. (k+1, B, N, dim) trajectories);
+        a (B, d) context is broadcast along the extra leading dims first."""
+        lead = q.shape[:-2]
+        qf = q.reshape(-1, *q.shape[-2:])
+        pf = p.reshape(-1, *p.shape[-2:])
+        if context is not None:
+            cf = context
+            for _ in range(len(lead) - (context.dim() - 1)):
+                cf = cf.unsqueeze(0)
+            cf = cf.expand(*lead, -1).reshape(-1, context.shape[-1])
+        else:
+            cf = None
+        t = self.T(pf).squeeze(-1).sum(dim=-1)          # (B',)
+        e = t + self.V(qf, cf)                          # (B',)
+        return e.reshape(lead)
+
+    def _grad(self, energy_fn, x: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """Autograd gradient of a scalar energy w.r.t. x ONLY (context fixed).
+        create_graph follows self.training so loss gradients flow through the
+        integrator into T/V AND (via context) into the liquid core."""
+        if not x.requires_grad:
+            x = x.requires_grad_(True)
+        energy = energy_fn(x) if context is None else energy_fn(x, context)
+        (g,) = torch.autograd.grad(energy.sum(), x, create_graph=self.training)
+        return g
+
+    def dT_dp(self, p: torch.Tensor) -> torch.Tensor:
+        """dH/dp = generalized velocity q_dot (summed over nodes -> per-node)."""
+        return self._grad(lambda x: self.T(x).squeeze(-1).sum(dim=-1), p)
+
+    def dV_dq(self, q: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """dH/dq;  p_dot = -dH/dq (the force).  Context sets the potential."""
+        return self._grad(self.V, q, context)
+
+    # -- symplectic integration (identical scheme to HamiltonianHead) --------
+
+    def step(self, q: torch.Tensor, p: torch.Tensor, dt: float,
+             context: Optional[torch.Tensor] = None
+             ) -> Tuple[torch.Tensor, torch.Tensor]:
+        dt = float(dt)
+        p_half = p - 0.5 * dt * self.dV_dq(q, context)
+        q_next = q + dt * self.dT_dp(p_half)
+        p_next = p_half - 0.5 * dt * self.dV_dq(q_next, context)
+        return q_next, p_next
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, steps: int, dt: float,
+                context: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Integrate `steps` symplectic steps under a FIXED context. Returns
+        (qs, ps), each (steps + 1, ..., N, dim) including the initial state."""
+        qs, ps = [q0], [p0]
+        q, p = q0, p0
+        for _ in range(int(steps)):
+            q, p = self.step(q, p, dt, context)
             qs.append(q)
             ps.append(p)
         return torch.stack(qs), torch.stack(ps)

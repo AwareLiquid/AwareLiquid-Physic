@@ -29,7 +29,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .hamiltonian import HamiltonianHead
+from .hamiltonian import HamiltonianHead, OperatorHamiltonianHead
 from .liquid_core import LiquidCore
 
 
@@ -71,6 +71,64 @@ class LiquidHamiltonianModel(nn.Module):
         """Infer context from the prefix, then predict k steps forward from the
         last observed state. Returns (qs, ps, context); qs/ps are (k+1, B, phase_dim)
         INCLUDING the initial state (the last observed one)."""
+        context = self.infer_context(q_obs, p_obs)
+        q0, p0 = q_obs[:, -1], p_obs[:, -1]
+        qs, ps = self.rollout(q0, p0, context, k)
+        return qs, ps, context
+
+
+class LiquidOperatorHamiltonianModel(nn.Module):
+    """v0.2 (M2): liquid system-ID + OPERATOR-potential symplectic rollout.
+
+    The field/particle version of LiquidHamiltonianModel. Phase states are
+    (B, T, N, phase_dim) with an ARBITRARY number of nodes N — resolution
+    invariance is preserved end-to-end:
+      * the prefix is encoded per-node by ONE shared Linear (same weights at
+        every node) and then MEAN-pooled over nodes before the liquid core,
+        so no parameter depends on N;
+      * the Hamiltonian head is OperatorHamiltonianHead (FNO potential).
+    """
+
+    def __init__(self, phase_dim: int, d_model: int = 64, context_dim: int = 16,
+                 n_scales: int = 4, modes: int = 12, width: int = 32,
+                 fno_depth: int = 4, hidden_dim: int = 64, t_depth: int = 2,
+                 dt: float = 0.1, core_dt: float = 1.0, reflect_pad: int = 8):
+        super().__init__()
+        self.phase_dim = int(phase_dim)
+        self.context_dim = int(context_dim)
+        self.dt = float(dt)
+
+        # Per-node encoder: resolution-invariant (shared Linear + mean pool).
+        self.node_enc = nn.Linear(2 * phase_dim, d_model)
+        self.core = LiquidCore(d_model, d_model, n_scales=n_scales, dt=core_dt)
+        self.context_proj = nn.Linear(d_model, context_dim)
+        # Operator-conditioned Hamiltonian: V(q | ctx) in function space.
+        self.ham = OperatorHamiltonianHead(phase_dim, width=width, modes=modes,
+                                           fno_depth=fno_depth,
+                                           context_dim=context_dim,
+                                           hidden_dim=hidden_dim,
+                                           t_depth=t_depth,
+                                           reflect_pad=reflect_pad)
+
+    def infer_context(self, q_obs: torch.Tensor, p_obs: torch.Tensor) -> torch.Tensor:
+        """(B, T_obs, N, phase_dim) x2 -> (B, context_dim). System identification
+        from the observed prefix via the liquid recurrence."""
+        x = torch.cat([q_obs, p_obs], dim=-1)          # (B, T, N, 2*phase_dim)
+        x = self.node_enc(x)                           # (B, T, N, d_model)
+        x = x.mean(dim=2)                              # (B, T, d_model) — pool over N
+        return self.context_proj(self.core.encode(x))  # (B, context_dim)
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, context: torch.Tensor,
+                steps: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Symplectic rollout of `steps` from (q0, p0) under the fixed inferred
+        context. Returns (qs, ps), each (steps+1, B, N, phase_dim)."""
+        return self.ham.rollout(q0, p0, steps, self.dt, context=context)
+
+    def forward(self, q_obs: torch.Tensor, p_obs: torch.Tensor, k: int
+                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Infer context from the prefix, then predict k steps forward from the
+        last observed state. Returns (qs, ps, context); qs/ps are
+        (k+1, B, N, phase_dim) INCLUDING the initial state."""
         context = self.infer_context(q_obs, p_obs)
         q0, p0 = q_obs[:, -1], p_obs[:, -1]
         qs, ps = self.rollout(q0, p0, context, k)
