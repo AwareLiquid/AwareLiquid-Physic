@@ -24,7 +24,7 @@ import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from awareliquid_physics.datasets import gen_wave_1d
+from awareliquid_physics.datasets import gen_wave_1d, gen_wave_1d_inhomogeneous
 from awareliquid_physics.hamiltonian import OperatorHamiltonianHead
 from awareliquid_physics.model import LiquidOperatorHamiltonianModel
 from awareliquid_physics.train import train_semigroup
@@ -68,8 +68,9 @@ def make_models(args):
     return liquid, static
 
 
-def evaluate(model, qs, ps, t_obs, eval_k, dt, c):
-    """Free-running eval from the prefix: rollout MSE + energy drift (true c)."""
+def evaluate(model, qs, ps, c_field, t_obs, eval_k, dt):
+    """Free-running eval from the prefix: rollout MSE + energy drift. c_field is
+    the per-trajectory wave-speed field (n_traj, N) for the energy diagnostic."""
     model.eval()
     q_obs, p_obs = qs[:, :t_obs], ps[:, :t_obs]
     with torch.enable_grad():
@@ -81,7 +82,8 @@ def evaluate(model, qs, ps, t_obs, eval_k, dt, c):
 
     def string_energy(q, p):
         dq = q - torch.roll(q, 1, dims=-2)
-        return 0.5 * (p ** 2).sum((-1, -2)) + 0.5 * (c ** 2) * (dq ** 2).sum((-1, -2))
+        c2 = (c_field ** 2).unsqueeze(0).unsqueeze(-1)       # (1, B, N, 1)
+        return 0.5 * (p ** 2).sum((-1, -2)) + 0.5 * (c2 * dq ** 2).sum((-1, -2))
     E = string_energy(qs_pred, ps_pred)                      # (k+1, B)
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).max().item()
@@ -116,6 +118,10 @@ def main():
     ap.add_argument("--c_lo", type=float, default=0.8)
     ap.add_argument("--c_hi", type=float, default=1.6)
     ap.add_argument("--c_eval", type=float, default=1.0)
+    ap.add_argument("--c_var", type=float, default=0.5,
+                    help="inhomogeneous mode: amplitude of the random c(x) field")
+    ap.add_argument("--inhomogeneous", action="store_true",
+                    help="wave speed is a random smooth FIELD c(x) per trajectory")
     ap.add_argument("--n_nodes", type=int, default=32)
     ap.add_argument("--n_res_test", type=int, default=64)
     ap.add_argument("--n_res_eval", type=int, default=16)
@@ -129,6 +135,8 @@ def main():
     ap.add_argument("--reflect_pad", type=int, default=8)
     ap.add_argument("--train_steps", type=int, default=300)
     ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--lr_decay", type=float, default=1.0,
+                    help="per-step exponential lr decay (1.0 = constant)")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
@@ -136,34 +144,43 @@ def main():
 
     g = torch.Generator().manual_seed(args.seed)
     n = args.n_train + args.n_eval
-    qs, ps = gen_wave_1d(n, args.gen_steps, args.dt, args.n_nodes,
-                         c=args.c_eval, generator=g)
-    # A family of wave speeds: half at c_eval, rest spread over [c_lo, c_hi] —
-    # per-trajectory hidden parameter the context must identify.
-    g2 = torch.Generator().manual_seed(args.seed + 1)
-    qs2, ps2 = gen_wave_1d(n, args.gen_steps, args.dt, args.n_nodes,
-                           c=args.c_eval, generator=g2)
-    cs = torch.empty(n)
-    cs[:n // 2] = args.c_eval
-    cs[n // 2:] = args.c_lo + (args.c_hi - args.c_lo) * torch.rand(
-        n - n // 2, generator=g2)
-    for i in range(n // 2, n):
-        qi, pi = gen_wave_1d(1, args.gen_steps, args.dt, args.n_nodes,
-                             c=cs[i].item(), generator=g2)
-        qs[i], ps[i] = qi[0], pi[0]
+    if args.inhomogeneous:
+        # Hard version: the hidden parameter is a whole spatial FIELD c(x) per
+        # trajectory — a static potential can only approximate an average medium.
+        qs, ps, cfields = gen_wave_1d_inhomogeneous(
+            n, args.gen_steps, args.dt, args.n_nodes,
+            c_mean=args.c_eval, c_var=args.c_var, generator=g)
+        print(f"field family (INHOMOGENEOUS): N={args.n_nodes} "
+              f"c(x) = {args.c_eval} +/- {args.c_var} per trajectory", flush=True)
+    else:
+        # Family of constant wave speeds: half at c_eval, rest spread over
+        # [c_lo, c_hi] — per-trajectory hidden scalar the context must identify.
+        qs, ps = gen_wave_1d(n, args.gen_steps, args.dt, args.n_nodes,
+                             c=args.c_eval, generator=g)
+        g2 = torch.Generator().manual_seed(args.seed + 1)
+        cs = torch.empty(n)
+        cs[:n // 2] = args.c_eval
+        cs[n // 2:] = args.c_lo + (args.c_hi - args.c_lo) * torch.rand(
+            n - n // 2, generator=g2)
+        for i in range(n // 2, n):
+            qi, pi = gen_wave_1d(1, args.gen_steps, args.dt, args.n_nodes,
+                                 c=cs[i].item(), generator=g2)
+            qs[i], ps[i] = qi[0], pi[0]
+        cfields = cs[:, None].expand(n, args.n_nodes)
+        print(f"field family: N={args.n_nodes} c~{{{args.c_lo}..{args.c_hi}}} "
+              f"t_obs={args.t_obs} k_train={args.k_train} eval_k={args.eval_k}",
+              flush=True)
     tr, ev = slice(0, args.n_train), slice(args.n_train, None)
-    print(f"field family: N={args.n_nodes} c~{{{args.c_lo}..{args.c_hi}}} "
-          f"t_obs={args.t_obs} k_train={args.k_train} eval_k={args.eval_k}",
-          flush=True)
 
     liquid, static = make_models(args)
     results = {}
     for name, model in (("liquid_operator", liquid), ("static_operator", static)):
         n_par = sum(p.numel() for p in model.parameters())
         floss = train_semigroup(model, qs[tr], ps[tr], args.t_obs, args.k_train,
-                                args.train_steps, args.lr, args.batch, args.seed)
-        mse, drift = evaluate(model, qs[ev], ps[ev], args.t_obs, args.eval_k,
-                              args.dt, args.c_eval)
+                                args.train_steps, args.lr, args.batch, args.seed,
+                                lr_decay=args.lr_decay)
+        mse, drift = evaluate(model, qs[ev], ps[ev], cfields[ev], args.t_obs,
+                              args.eval_k, args.dt)
         results[name] = {"params": n_par, "train_loss": floss,
                          "rollout_mse": mse, "energy_drift_max": drift}
         print(f"  [{name:16s}] params {n_par:>6,} | train_loss {floss:.4e} | "

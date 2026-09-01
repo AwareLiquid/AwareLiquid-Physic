@@ -84,9 +84,10 @@ def rollout_mse_loss(qs_pred, ps_pred, q_true, p_true):
     return ((qs_pred - qt) ** 2 + (ps_pred - pt) ** 2).mean()
 
 
-def train(model, qs, ps, t_obs, k_train, steps, lr, batch, seed):
+def train(model, qs, ps, t_obs, k_train, steps, lr, batch, seed, lr_decay=1.0):
     g = torch.Generator().manual_seed(seed)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda t: lr_decay ** t)
     N, S = qs.shape[0], qs.shape[1]
     model.train()
     loss = torch.tensor(float("nan"))
@@ -102,6 +103,7 @@ def train(model, qs, ps, t_obs, k_train, steps, lr, batch, seed):
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
+        sched.step()
     return loss.item()
 
 
@@ -141,6 +143,8 @@ def main():
     ap.add_argument("--n_scales", type=int, default=4)
     ap.add_argument("--train_steps", type=int, default=500)
     ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--lr_decay", type=float, default=1.0,
+                    help="per-step exponential lr decay (1.0 = constant)")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="benchmarks/physics_out")
@@ -170,7 +174,8 @@ def main():
         model = build(name)
         n_par = sum(p.numel() for p in model.parameters())
         floss = train(model, qs[tr], ps[tr], args.t_obs, args.k_train,
-                      args.train_steps, args.lr, args.batch, args.seed)
+                      args.train_steps, args.lr, args.batch, args.seed,
+                      args.lr_decay)
         res = evaluate(model, qs[ev], ps[ev], omega[ev], args.t_obs, args.eval_k, args.dt)
         res.update({"params": n_par, "train_loss": round(floss, 6)})
         results[name] = res

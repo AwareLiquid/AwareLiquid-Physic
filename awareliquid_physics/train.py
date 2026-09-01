@@ -55,16 +55,21 @@ def _energy_of(model: nn.Module, qs: torch.Tensor, ps: torch.Tensor,
 
 def train_semigroup(model: nn.Module, qs: torch.Tensor, ps: torch.Tensor,
                     t_obs: int, k_train: int, steps: int, lr: float,
-                    batch: int, seed: int, drift_weight: float = 0.0
+                    batch: int, seed: int, drift_weight: float = 0.0,
+                    lr_decay: float = 1.0
                     ) -> float:
     """Semigroup (all2all) training loop — arbitrary start states after the
     prefix, fixed span k_train, optional drift penalty. Returns the final loss.
 
     qs/ps: (n_traj, S, ...) — the ... part is whatever the model consumes
     (dim for the v0.1 head, (N, dim) for the operator head).
+    lr_decay: per-step exponential decay factor (1.0 = constant lr). Constant
+    lr overfits long schedules (train loss keeps dropping, rollout generalisation
+    degrades) — decay it.
     """
     g = torch.Generator().manual_seed(seed)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda t: lr_decay ** t)
     n_traj, S = qs.shape[0], qs.shape[1]
     assert S > t_obs + k_train, "trajectory too short for prefix + rollout span"
     model.train()
@@ -97,12 +102,13 @@ def train_semigroup(model: nn.Module, qs: torch.Tensor, ps: torch.Tensor,
         opt.zero_grad(set_to_none=True)
         loss.backward()
         opt.step()
+        sched.step()
     return loss.item()
 
 
 def train_pretrain(model: nn.Module, families, t_obs: int, k_train: int,
                    steps: int, lr: float, batch: int, seed: int,
-                   drift_weight: float = 0.0) -> float:
+                   drift_weight: float = 0.0, lr_decay: float = 1.0) -> float:
     """Pretrain on a MIX of system families: concatenate them along the
     trajectory axis and run the semigroup loop. `families` is a list of
     (qs, ps) pairs; the model sees a single mixed stream, which is what forces
@@ -110,16 +116,16 @@ def train_pretrain(model: nn.Module, families, t_obs: int, k_train: int,
     qs = torch.cat([f[0] for f in families], dim=0)
     ps = torch.cat([f[1] for f in families], dim=0)
     return train_semigroup(model, qs, ps, t_obs, k_train, steps, lr, batch,
-                           seed, drift_weight)
+                           seed, drift_weight, lr_decay)
 
 
 def finetune(model: nn.Module, qs: torch.Tensor, ps: torch.Tensor,
              t_obs: int, k_train: int, steps: int, lr: float, batch: int,
              seed: int, n_shot: Optional[int] = None,
-             drift_weight: float = 0.0) -> float:
+             drift_weight: float = 0.0, lr_decay: float = 1.0) -> float:
     """Few-shot finetune on ONE family. If n_shot is given, only the first
     n_shot trajectories are used (Poseidon-style few-shot evaluation)."""
     if n_shot is not None:
         qs, ps = qs[:int(n_shot)], ps[:int(n_shot)]
     return train_semigroup(model, qs, ps, t_obs, k_train, steps, lr, batch,
-                           seed, drift_weight)
+                           seed, drift_weight, lr_decay)

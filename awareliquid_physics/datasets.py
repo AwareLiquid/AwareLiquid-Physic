@@ -65,6 +65,58 @@ def gen_wave_1d(n_traj: int, steps: int, dt: float, N: int, c: float,
            torch.cat(ps, dim=1).permute(1, 0, 2, 3)   # (n_traj, steps+1, N, 1)
 
 
+def gen_wave_1d_inhomogeneous(n_traj: int, steps: int, dt: float, N: int,
+                               c_mean: float, c_var: float,
+                               generator: torch.Generator, n_modes: int = 4
+                               ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """A family of 1D INHOMOGENEOUS periodic strings: the wave speed is a
+    smooth random FIELD c(x) drawn per trajectory (a few low Fourier modes
+    around c_mean), not a global constant.
+
+    Hamiltonian:  H = sum_i [ p_i^2/2 + c_i^2/2 (q_{i+1} - q_i)^2 ]   (cyclic)
+
+    so the acceleration is the VARIABLE-COEFFICIENT discrete Laplacian
+        a_i = c_i^2 (q_{i+1} - q_i) - c_{i-1}^2 (q_i - q_{i-1}).
+
+    This is the hard version of gen_wave_1d: the hidden parameter is the whole
+    SPATIAL FIELD c(x), which a static potential can only approximate by an
+    average medium — real per-trajectory adaptation (liquid system-ID) is what
+    buys accuracy. Ground truth via velocity-Verlet as before.
+
+    Returns (qs, ps, cs): qs/ps (n_traj, steps+1, N, 1), cs (n_traj, N) the
+    per-trajectory wave-speed fields (for the energy diagnostic).
+    """
+    qs, ps, cfields = [], [], []
+    for _ in range(n_traj):
+        c = c_mean + c_var * _smooth_field(1, N, generator, n_modes)  # (1, N)
+        c = c.clamp_min(0.2 * c_mean)
+        q0 = _smooth_field(1, N, generator, 5)                        # (1, N)
+        p0 = torch.randn(1, N, generator=generator) * 0.3
+
+        q = q0.unsqueeze(-1)   # (1, N, 1)
+        p = p0.unsqueeze(-1)
+        c2 = (c * c).unsqueeze(-1)                # (1, N, 1)
+        c2_shift = torch.roll(c2, 1, dims=1)
+
+        def accel(pos: torch.Tensor) -> torch.Tensor:
+            dq_f = torch.roll(pos, -1, dims=1) - pos   # q_{i+1} - q_i
+            dq_b = pos - torch.roll(pos, 1, dims=1)    # q_i - q_{i-1}
+            return c2 * dq_f - c2_shift * dq_b
+
+        q_list, p_list = [q], [p]
+        a = accel(q)
+        for _ in range(steps):
+            q, p, a = integrate_verlet(q, p, accel, dt, accel=a)
+            q_list.append(q)
+            p_list.append(p)
+        qs.append(torch.stack(q_list))
+        ps.append(torch.stack(p_list))
+        cfields.append(c)
+    return (torch.cat(qs, dim=1).permute(1, 0, 2, 3),
+            torch.cat(ps, dim=1).permute(1, 0, 2, 3),
+            torch.cat(cfields, dim=0))
+
+
 def _smooth_field(n_traj: int, N: int, generator: torch.Generator,
                   n_modes: int) -> torch.Tensor:
     """Random smooth field: a few low Fourier modes with random amplitudes and

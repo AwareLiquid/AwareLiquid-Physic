@@ -76,6 +76,8 @@ def main():
     ap.add_argument("--finetune_steps", type=int, default=200)
     ap.add_argument("--fromscratch_steps", type=int, default=400)
     ap.add_argument("--lr", type=float, default=3e-3)
+    ap.add_argument("--lr_decay", type=float, default=1.0,
+                    help="per-step exponential lr decay (1.0 = constant)")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
@@ -103,9 +105,11 @@ def main():
     # 1) Pretrain on the mix, then few-shot finetune to the unseen speed.
     model = build_model(args, args.seed)
     lp = train_pretrain(model, families, args.t_obs, args.k_train,
-                        args.pretrain_steps, args.lr, args.batch, args.seed)
+                        args.pretrain_steps, args.lr, args.batch, args.seed,
+                        lr_decay=args.lr_decay)
     lf = finetune(model, qs_few, ps_few, args.t_obs, args.k_train,
-                  args.finetune_steps, args.lr, args.batch, args.seed + 1)
+                  args.finetune_steps, args.lr, args.batch, args.seed + 1,
+                  lr_decay=args.lr_decay)
     mse_ft = evaluate(model, qs_ev, ps_ev, args.t_obs, args.eval_k, args.c_target)
     results["pretrain_then_finetune"] = {"pretrain_loss": lp, "finetune_loss": lf,
                                          "rollout_mse": mse_ft}
@@ -115,7 +119,8 @@ def main():
     # 2) Control: from scratch on the same n_shot trajectories (matched budget).
     model2 = build_model(args, args.seed)
     ls = train_semigroup(model2, qs_few, ps_few, args.t_obs, args.k_train,
-                         args.fromscratch_steps, args.lr, args.batch, args.seed + 2)
+                         args.fromscratch_steps, args.lr, args.batch, args.seed + 2,
+                         lr_decay=args.lr_decay)
     mse_fs = evaluate(model2, qs_ev, ps_ev, args.t_obs, args.eval_k, args.c_target)
     results["from_scratch"] = {"train_loss": ls, "rollout_mse": mse_fs}
     print(f"  [from scratch      ] loss {ls:.4e} | rollout_mse {mse_fs:.4e}",
