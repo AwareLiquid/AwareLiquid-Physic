@@ -40,8 +40,38 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 
-from awareliquid_physics.hamiltonian import HamiltonianHead
+from awareliquid_physics.hamiltonian import FiLMHamiltonianHead, HamiltonianHead
+from awareliquid_physics.liquid_core import LiquidCore
 from awareliquid_physics.model import GRUSeqModel, LiquidHamiltonianModel
+
+
+class LiquidFilmWrapper(torch.nn.Module):
+    """liquid_ham with the ADR-4 conditioning upgrade: the Hamiltonian potential
+    is FiLM-modulated by the inferred context instead of concatenating it. The
+    ablation that answers: does better conditioning close the gap to the 30%
+    liquid-advantage target that concat-conditioning plateaued at (21%)?"""
+
+    def __init__(self, phase_dim, d_model, context_dim, n_scales,
+                 hidden_dim, depth, dt):
+        super().__init__()
+        self.core = LiquidCore(2 * phase_dim, d_model, n_scales=n_scales, dt=1.0)
+        self.context_proj = torch.nn.Linear(d_model, context_dim)
+        self.ham = FiLMHamiltonianHead(phase_dim, hidden_dim=hidden_dim,
+                                       depth=depth, context_dim=context_dim)
+        self.dt = float(dt)
+
+    def infer_context(self, q_obs, p_obs):
+        x = torch.cat([q_obs, p_obs], dim=-1)
+        return self.context_proj(self.core.encode(x))
+
+    def rollout(self, q0, p0, ctx, steps):
+        return self.ham.rollout(q0, p0, steps, self.dt, context=ctx)
+
+    def forward(self, q_obs, p_obs, k):
+        ctx = self.infer_context(q_obs, p_obs)
+        q0, p0 = q_obs[:, -1], p_obs[:, -1]
+        qs, ps = self.rollout(q0, p0, ctx, k)
+        return qs, ps, ctx
 
 
 def gen_spring_family(n_traj, steps, dt, dim, omega_lo, omega_hi, g):
@@ -165,12 +195,15 @@ def main():
                                           context_dim=args.context_dim,
                                           n_scales=args.n_scales, hidden_dim=args.hidden,
                                           depth=2, dt=args.dt)
+        if name == "liquid_ham_film":
+            return LiquidFilmWrapper(args.dim, args.d_model, args.context_dim,
+                                     args.n_scales, args.hidden, 2, args.dt)
         if name == "static_ham":
             return StaticHamWrapper(args.dim, args.hidden, 2, args.dt)
         return GRUSeqModel(args.dim, hidden=args.hidden)
 
     results = {}
-    for name in ("liquid_ham", "static_ham", "gru_seq"):
+    for name in ("liquid_ham", "liquid_ham_film", "static_ham", "gru_seq"):
         model = build(name)
         n_par = sum(p.numel() for p in model.parameters())
         floss = train(model, qs[tr], ps[tr], args.t_obs, args.k_train,

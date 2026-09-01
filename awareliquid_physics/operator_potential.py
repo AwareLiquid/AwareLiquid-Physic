@@ -103,8 +103,12 @@ class FiLM(nn.Module):
         nn.init.zeros_(self.bias.bias)
 
     def forward(self, v: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
-        s = self.scale(context).unsqueeze(-1)      # (B, W, 1)
-        b = self.bias(context).unsqueeze(-1)
+        if v.dim() == 3:                     # (B, W, N) spectral/operator path
+            s = self.scale(context).unsqueeze(-1)
+            b = self.bias(context).unsqueeze(-1)
+        else:                                # (B, W) plain MLP path
+            s = self.scale(context)
+            b = self.bias(context)
         return s * v + b
 
 

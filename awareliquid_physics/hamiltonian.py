@@ -42,7 +42,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .operator_potential import OperatorPotential
+from .operator_potential import FiLM, OperatorPotential
 
 
 def _energy_mlp(dim: int, hidden_dim: int, depth: int) -> nn.Sequential:
@@ -56,6 +56,33 @@ def _energy_mlp(dim: int, hidden_dim: int, depth: int) -> nn.Sequential:
         d = hidden_dim
     layers += [nn.Linear(d, 1)]
     return nn.Sequential(*layers)
+
+
+class FilmEnergyNet(nn.Module):
+    """A Tanh energy MLP whose HIDDEN layers are FiLM-modulated by a context:
+    each hidden activation is h <- scale(ctx) * h + bias(ctx). v0.2 (ADR-4):
+    conditioning the potential by FiLM (per-layer per-channel modulation) is
+    more expressive than concatenating the context to the input — the M1
+    benchmark upgrades its pointwise potential from concat to FiLM here."""
+
+    def __init__(self, dim: int, hidden_dim: int, depth: int, context_dim: int):
+        super().__init__()
+        self.in_layer = nn.Linear(dim, hidden_dim)
+        self.hidden = nn.ModuleList(
+            [nn.Linear(hidden_dim, hidden_dim) for _ in range(depth - 1)])
+        self.out_layer = nn.Linear(hidden_dim, 1)
+        self.films = nn.ModuleList(
+            [FiLM(hidden_dim, context_dim) for _ in range(depth)])
+
+    def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+        # FiLM modulates the PRE-activation, then Tanh compresses the result
+        # into [-1, 1]: every hidden activation stays bounded regardless of the
+        # learned scale (an unbounded post-activation FiLM made the force field
+        # explode and long rollouts diverge — this ordering fixes that).
+        h = torch.tanh(self.films[0](self.in_layer(x), context))
+        for layer, film in zip(self.hidden, self.films[1:]):
+            h = torch.tanh(film(layer(h), context))
+        return self.out_layer(h)
 
 
 class HamiltonianHead(nn.Module):
@@ -147,6 +174,64 @@ class HamiltonianHead(nn.Module):
         The field is an autograd gradient, so call under enable_grad; at eval,
         detach the returned trajectory.
         """
+        qs, ps = [q0], [p0]
+        q, p = q0, p0
+        for _ in range(int(steps)):
+            q, p = self.step(q, p, dt, context)
+            qs.append(q)
+            ps.append(p)
+        return torch.stack(qs), torch.stack(ps)
+
+
+class FiLMHamiltonianHead(nn.Module):
+    """Separable H(q,p|ctx) = T(p) + V(q|ctx) with the potential FiLM-conditioned
+    (ADR-4): each hidden layer of V is modulated by scale(ctx) * h + bias(ctx).
+    Same velocity-Verlet dynamics as HamiltonianHead — conservation is still
+    architectural; only the conditioning mechanism is upgraded from concat.
+
+    q, p are (..., dim). context_dim must be > 0.
+    """
+
+    def __init__(self, dim: int, hidden_dim: int = 64, depth: int = 2,
+                 context_dim: int = 0):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.T = _energy_mlp(dim, hidden_dim, depth)                        # T(p)
+        self.V = FilmEnergyNet(dim, hidden_dim, depth, context_dim)         # V(q|ctx)
+
+    def energy(self, q: torch.Tensor, p: torch.Tensor,
+               context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        assert context is not None, "FiLMHamiltonianHead requires a context"
+        return self.T(p).squeeze(-1) + self.V(q, context).squeeze(-1)
+
+    def _grad(self, net, x: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if not x.requires_grad:
+            x = x.requires_grad_(True)
+        out = net(x) if context is None else net(x, context)
+        (g,) = torch.autograd.grad(out.sum(), x, create_graph=self.training)
+        return g
+
+    def dT_dp(self, p: torch.Tensor) -> torch.Tensor:
+        return self._grad(self.T, p)
+
+    def dV_dq(self, q: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return self._grad(self.V, q, context)
+
+    def step(self, q: torch.Tensor, p: torch.Tensor, dt: float,
+             context: Optional[torch.Tensor] = None
+             ) -> Tuple[torch.Tensor, torch.Tensor]:
+        dt = float(dt)
+        p_half = p - 0.5 * dt * self.dV_dq(q, context)
+        q_next = q + dt * self.dT_dp(p_half)
+        p_next = p_half - 0.5 * dt * self.dV_dq(q_next, context)
+        return q_next, p_next
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, steps: int, dt: float,
+                context: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
         qs, ps = [q0], [p0]
         q, p = q0, p0
         for _ in range(int(steps)):

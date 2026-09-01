@@ -171,9 +171,10 @@ L = L_mse + λ * mean( (H_t - H_0)² )    # 弱正则，λ 小
 | ADR-1 | 守恒走架构不走损失（保持 v0.1） | v0.1 已实证 3-6× 漂移优势；PINN 软约束文献综述显示软惩罚需调参且不保证 | PINN 残差损失：训练难、无保证（v0.1 README 已记录此决定） |
 | ADR-2 | LTC 升级为输入依赖 tau，而非换 Transformer 编码器 | 保持液体基底连续性；pscan 路线兼容；原版 LTC 表达力理论（AAAI 2021）有支撑 | Transformer 前缀编码：与仓库定位冲突，且失去 O(log T) 扫描优势 |
 | ADR-3 | 能量场用 FNO 谱算子而非图神经网络 | FNO 提供分辨率不变 + 平移不变 + 全局感受野（ICLR 2021）；与 N 无关的参数量 | GNN（GraphCast 路线）：分辨率绑定图结构，超分需重构图；参数量随 N 增长 |
-| ADR-4 | 条件化默认 FiLM 调制 | 通道维调制保持分辨率不变性；表达力强于 concat；成本低于 hypernetwork | concat：v0.1 实证表达力不足（5% 差距）；hypernetwork：M2 消融后备 |
+| ADR-4 | 条件化默认 FiLM 调制 | 通道维调制保持分辨率不变性；表达力强于 concat；成本低于 hypernetwork | concat：v0.1 实证表达力不足（5% 差距）；hypernetwork：M2 消融后备。**实测修订（M1 消融）**：短窗口训练（k_train=8）+ 小系统下 FiLM 比 concat 更易过拟合 context（train_loss 更低但 100 步 rollout 发散 9-18x）——FiLM 的每层调制使势能对 context 过度敏感。结论：FiLM 保留用于 M2（半群训练 + 场任务的正则效应下稳定）；M1 保留 concat；FiLM 需配长窗口/半群训练使用 |
 | ADR-5 | 半群 all2all 训练 | Poseidon 已证数据效率收益；对辛积分 rollout 天然适配（任意步数合法） | 仅前缀→未来：每条轨迹 1 样本，数据效率瓶颈 |
 | ADR-6 | 保持 velocity-Verlet（不换高阶/隐式积分器） | 2 阶辛格式守恒保证充分；v0.1 基准可复现 | RK4/隐式：非辛 → 长程漂移；高阶级 symplectic：复杂度收益比低 |
+| ADR-7 | FiLM 层序：pre-activation（Tanh 前） | 实测：post-activation FiLM 无界 → 力场爆炸 → rollout 发散（mse 51.7）；Tanh 前调制保证每层激活有界 | post-activation：M1-FiLM 首版发散的直接原因 |
 
 ## 7. 风险与验证计划
 
