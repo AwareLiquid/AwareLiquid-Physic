@@ -20,7 +20,8 @@ from typing import Tuple
 
 import torch
 
-from .physics_ops import integrate_verlet
+from .physics_ops import (integrate_verlet, pairwise_gravity,
+                          reflect_in_box, resolve_sphere_collisions)
 
 
 def gen_wave_1d(n_traj: int, steps: int, dt: float, N: int, c: float,
@@ -116,6 +117,59 @@ def gen_wave_1d_inhomogeneous(n_traj: int, steps: int, dt: float, N: int,
     return (torch.cat(qs, dim=1).permute(1, 0, 2, 3),
             torch.cat(ps, dim=1).permute(1, 0, 2, 3),
             torch.cat(cfields, dim=0))
+
+
+def gen_nbody(n_traj: int, steps: int, dt: float, N: int, D: int,
+              mass_lo: float = 0.5, mass_hi: float = 1.5, G: float = 1.0,
+              softening: float = 0.05, box: float = 2.0, radius: float = 0.1,
+              restitution: float = 0.9, generator: torch.Generator = None,
+              device: str = "cpu"
+              ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Gravitational N-body systems with SOFT collisions, in a reflecting box.
+
+    Hidden parameter: the per-particle MASS field m_i ~ U[mass_lo, mass_hi]
+    (each trajectory has a different mass distribution). Dynamics:
+      * acceleration = pairwise_gravity (softened, momentum-conserving);
+      * velocity-Verlet integration (symplectic);
+      * sphere-sphere impulse collisions (momentum-conserving);
+      * reflection off the box walls [-box, box]^D.
+
+    This is the irregular-node system for P2-1: no grid, so the FNO spectral
+    potential does not apply; the correct energy structure is a PAIR potential
+    (see PairwisePotential). Ground truth via the zero-parameter physics_ops
+    engine — compute, don't memorise.
+
+    Returns (qs, ps, mass): qs/ps (n_traj, steps+1, N, D) positions/velocities,
+    mass (n_traj, N). On `device`.
+    """
+    if generator is None:
+        generator = torch.Generator(device=device)
+    qs, ps, masses = [], [], []
+    for _ in range(n_traj):
+        mass = mass_lo + (mass_hi - mass_lo) * torch.rand(
+            N, generator=generator, device=device)                 # (N,)
+
+        # Initial state: non-overlapping positions in the box, small velocities.
+        pos = torch.rand(N, D, generator=generator, device=device) * (2 * box) - box
+        vel = torch.randn(N, D, generator=generator, device=device) * 0.2
+        pos, vel = reflect_in_box(pos, vel, -box, box)
+
+        def accel_fn(p):
+            return pairwise_gravity(p, mass, G=G, softening=softening)
+
+        p_list, v_list = [pos], [vel]
+        a = accel_fn(pos)
+        for _ in range(steps):
+            pos, vel, a = integrate_verlet(pos, vel, accel_fn, dt, accel=a)
+            vel = resolve_sphere_collisions(pos, vel, radius=radius,
+                                            mass=mass, restitution=restitution)
+            pos, vel = reflect_in_box(pos, vel, -box, box)
+            p_list.append(pos)
+            v_list.append(vel)
+        qs.append(torch.stack(p_list))
+        ps.append(torch.stack(v_list))
+        masses.append(mass)
+    return (torch.stack(qs), torch.stack(ps), torch.stack(masses))
 
 
 def _smooth_field(n_traj: int, N: int, generator: torch.Generator,

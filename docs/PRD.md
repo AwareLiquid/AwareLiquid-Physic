@@ -117,6 +117,8 @@ v0.1 验证了核心命题：**物理写进架构（硬约束）优于物理写�
 
 待办：P2 扩展（N-body/非可分/概率化）为后续版本。
 
+**P2-1 进展（N-body）**：`datasets.gen_nbody`（引力 + 软碰撞 + 盒子反射，隐藏质量场）+ `pairwise_potential.PairwisePotential`（径向对势，平移/置换/旋转三重不变——修掉了一个"向量对势非偶函数导致置换不变性失效"的实现 bug）。本地测试 30/30 通过。完整 N-body 训练实验待远程恢复。
+
 ---
 
 *本 PRD 与 `docs/architecture.md`（技术架构）配套阅读；架构决策细节以 ADR 为准。*

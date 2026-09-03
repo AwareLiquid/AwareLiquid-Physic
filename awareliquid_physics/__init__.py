@@ -11,12 +11,13 @@ Scope: continuous-state trajectory prediction, validated on physics metrics
 (rollout MSE, energy drift). NOT a language model; no hallucination claim.
 """
 
-from .datasets import gen_wave_1d, gen_wave_1d_inhomogeneous
+from .datasets import gen_nbody, gen_wave_1d, gen_wave_1d_inhomogeneous
 from .hamiltonian import (FiLMHamiltonianHead, HamiltonianHead,
                           MLPFieldHead, OperatorHamiltonianHead)
 from .liquid_core import LiquidCore
 from .model import GRUSeqModel, LiquidHamiltonianModel, LiquidOperatorHamiltonianModel
 from .operator_potential import FiLM, FNOBlock, OperatorPotential, SpectralConv1d
+from .pairwise_potential import PairwisePotential
 from .parallel_scan import pscan, pscan_constant_A, pscan_sequential
 from .train import finetune, train_pretrain, train_semigroup
 
@@ -33,8 +34,10 @@ __all__ = [
     "SpectralConv1d",
     "FNOBlock",
     "FiLM",
+    "PairwisePotential",
     "gen_wave_1d",
     "gen_wave_1d_inhomogeneous",
+    "gen_nbody",
     "train_semigroup",
     "train_pretrain",
     "finetune",
