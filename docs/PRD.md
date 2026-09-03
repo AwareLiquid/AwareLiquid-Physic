@@ -125,7 +125,20 @@ v0.1 验证了核心命题：**物理写进架构（硬约束）优于物理写�
 
 **P2-3/P2-4 进展（概率化 + 时间条件化）**：`ProbabilisticLiquidModel`（VAE 式概率 context——liquid core 推断隐藏参数的分布 (mu, logvar)，重参数化采样产生 ensemble 轨迹，概率预测 + 量化不确定性，GenCast 线的最小 ensemble 版）+ `TimeConditionedHamiltonianHead`（时间作为显式输入，连续时间评估，Poseidon 式；时变系统能量不守恒是物理正确的，已诚实标注）。测试：时间真实影响力场、rollout 推进时间、ensemble 有 spread、梯度到分布参数。本地测试 **43/43 通过**。
 
-**P2 全部完成**：N-body（P2-1）✅ 非可分（P2-2）✅ 概率化（P2-3）✅ 时间条件化（P2-4）✅ + 2D 谱算子 ✅ + 多 seed 协议 ✅。模型完整，待远程训练。
+**P2 全部完成**：N-body（P2-1）✅ 非可分（P2-2）✅ 概率化（P2-3）✅ 时间条件化（P2-4）✅ + 2D 谱算子 ✅ + 多 seed 协议 ✅。**每个组件都有 benchmark 训练入口**：
+
+| benchmark | 组件 | 真值 |
+|---|---|---|
+| `liquid_physics_eval` | M1 回归 | 弹簧族（解析） |
+| `field_eval` | M2 1D 算子势能 | 1D 波/非均匀介质 |
+| `field_eval_2d` | 2D 谱算子 | 2D 周期膜 |
+| `nbody_eval` | 对势 N-body | 引力+碰撞 |
+| `nonseparable_eval` | 非可分头 | 磁场粒子（RK4，`gen_magnetic`） |
+| `probabilistic_eval` | 概率 context | 弹簧族 ensemble |
+| `time_eval` | 时间条件化 | 受迫振子（RK4，`gen_driven`） |
+| `pretrain_finetune_eval` | M3 预训练微调 | 多波速族 |
+
+模型架构完整、测试 **43/43 通过**、全部推送 GitHub。待用户租赁服务器后统一训练。
 
 ---
 
