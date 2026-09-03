@@ -21,6 +21,7 @@ from .hamiltonian import (FiLMHamiltonianHead, HamiltonianHead,
 from .liquid_core import LiquidCore
 from .model import (GRUSeqModel, LiquidHamiltonianModel,
                     LiquidNBodyModel, LiquidOperatorHamiltonianModel,
+                    LiquidOperatorHamiltonianModel2d,
                     ProbabilisticLiquidModel)
 from .operator_potential import (FiLM, FNOBlock, FNOBlock2d,
                                  OperatorPotential, OperatorPotential2d,
@@ -41,6 +42,7 @@ __all__ = [
     "LiquidCore",
     "LiquidHamiltonianModel",
     "LiquidOperatorHamiltonianModel",
+    "LiquidOperatorHamiltonianModel2d",
     "LiquidNBodyModel",
     "ProbabilisticLiquidModel",
     "GRUSeqModel",

@@ -29,7 +29,8 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .hamiltonian import HamiltonianHead, OperatorHamiltonianHead
+from .hamiltonian import (HamiltonianHead, OperatorHamiltonianHead,
+                          OperatorHamiltonianHead2d)
 from .liquid_core import LiquidCore
 from .pairwise_potential import NBodyHamiltonianHead
 
@@ -130,6 +131,49 @@ class LiquidOperatorHamiltonianModel(nn.Module):
         """Infer context from the prefix, then predict k steps forward from the
         last observed state. Returns (qs, ps, context); qs/ps are
         (k+1, B, N, phase_dim) INCLUDING the initial state."""
+        context = self.infer_context(q_obs, p_obs)
+        q0, p0 = q_obs[:, -1], p_obs[:, -1]
+        qs, ps = self.rollout(q0, p0, context, k)
+        return qs, ps, context
+
+
+class LiquidOperatorHamiltonianModel2d(nn.Module):
+    """v0.2 (P2): the 2D-grid counterpart of LiquidOperatorHamiltonianModel.
+    Phase states are (B, T, H, W, dim); H, W arbitrary (resolution-invariant):
+    the prefix is encoded per-node by ONE shared Linear then MEAN-pooled over
+    the grid before the liquid core, and the head is OperatorHamiltonianHead2d."""
+
+    def __init__(self, dim: int, d_model: int = 64, context_dim: int = 16,
+                 n_scales: int = 4, modes_x: int = 12, modes_y: int = 12,
+                 width: int = 32, fno_depth: int = 4, hidden_dim: int = 64,
+                 t_depth: int = 2, dt: float = 0.05, core_dt: float = 1.0,
+                 reflect_pad: int = 8):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.dt = float(dt)
+
+        self.node_enc = nn.Linear(2 * dim, d_model)
+        self.core = LiquidCore(d_model, d_model, n_scales=n_scales, dt=core_dt)
+        self.context_proj = nn.Linear(d_model, context_dim)
+        self.ham = OperatorHamiltonianHead2d(
+            dim, width=width, modes_x=modes_x, modes_y=modes_y,
+            fno_depth=fno_depth, context_dim=context_dim, hidden_dim=hidden_dim,
+            t_depth=t_depth, reflect_pad=reflect_pad)
+
+    def infer_context(self, q_obs: torch.Tensor,
+                      p_obs: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([q_obs, p_obs], dim=-1)          # (B, T, H, W, 2*dim)
+        x = self.node_enc(x)                           # (B, T, H, W, d_model)
+        x = x.mean(dim=(2, 3))                         # (B, T, d_model)
+        return self.context_proj(self.core.encode(x))
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, context: torch.Tensor,
+                steps: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.ham.rollout(q0, p0, steps, self.dt, context=context)
+
+    def forward(self, q_obs: torch.Tensor, p_obs: torch.Tensor, k: int
+                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         context = self.infer_context(q_obs, p_obs)
         q0, p0 = q_obs[:, -1], p_obs[:, -1]
         qs, ps = self.rollout(q0, p0, context, k)
