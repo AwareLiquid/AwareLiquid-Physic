@@ -11,13 +11,17 @@ Scope: continuous-state trajectory prediction, validated on physics metrics
 (rollout MSE, energy drift). NOT a language model; no hallucination claim.
 """
 
-from .datasets import gen_nbody, gen_wave_1d, gen_wave_1d_inhomogeneous
+from .datasets import (gen_nbody, gen_wave_1d, gen_wave_1d_inhomogeneous,
+                       gen_wave_2d)
 from .hamiltonian import (FiLMHamiltonianHead, HamiltonianHead,
-                          MLPFieldHead, OperatorHamiltonianHead)
+                          MLPFieldHead, OperatorHamiltonianHead,
+                          OperatorHamiltonianHead2d)
 from .liquid_core import LiquidCore
 from .model import (GRUSeqModel, LiquidHamiltonianModel,
                     LiquidNBodyModel, LiquidOperatorHamiltonianModel)
-from .operator_potential import FiLM, FNOBlock, OperatorPotential, SpectralConv1d
+from .operator_potential import (FiLM, FNOBlock, FNOBlock2d,
+                                 OperatorPotential, OperatorPotential2d,
+                                 SpectralConv1d, SpectralConv2d)
 from .pairwise_potential import NBodyHamiltonianHead, PairwisePotential
 from .parallel_scan import pscan, pscan_constant_A, pscan_sequential
 from .train import finetune, train_pretrain, train_semigroup
@@ -27,6 +31,7 @@ __all__ = [
     "FiLMHamiltonianHead",
     "MLPFieldHead",
     "OperatorHamiltonianHead",
+    "OperatorHamiltonianHead2d",
     "NBodyHamiltonianHead",
     "LiquidCore",
     "LiquidHamiltonianModel",
@@ -34,12 +39,16 @@ __all__ = [
     "LiquidNBodyModel",
     "GRUSeqModel",
     "OperatorPotential",
+    "OperatorPotential2d",
     "SpectralConv1d",
+    "SpectralConv2d",
     "FNOBlock",
+    "FNOBlock2d",
     "FiLM",
     "PairwisePotential",
     "gen_wave_1d",
     "gen_wave_1d_inhomogeneous",
+    "gen_wave_2d",
     "gen_nbody",
     "train_semigroup",
     "train_pretrain",

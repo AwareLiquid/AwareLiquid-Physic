@@ -184,3 +184,64 @@ def _smooth_field(n_traj: int, N: int, generator: torch.Generator,
         field += amp.unsqueeze(-1) * torch.sin(
             2.0 * math.pi * m * x / N + phase.unsqueeze(-1))
     return field
+
+
+def gen_wave_2d(n_traj: int, steps: int, dt: float, H: int, W: int, c: float,
+                generator: torch.Generator, n_modes: int = 3,
+                device: str = "cpu") -> Tuple[torch.Tensor, torch.Tensor]:
+    """A family of 2D periodic membranes (linear wave equation on a torus).
+
+    Hamiltonian:  H = sum_{x,y} [ p^2/2 + c^2/2 ((q_{x+1,y}-q)^2 + (q_{x,y+1}-q)^2) ]
+
+    so the acceleration is the 2D discrete Laplacian (cyclic):
+        a = c^2 (q_{x+1,y} + q_{x-1,y} + q_{x,y+1} + q_{x,y-1} - 4 q).
+
+    Each trajectory starts from a SMOOTH random 2D perturbation (a few low
+    Fourier modes) and is integrated with velocity-Verlet — the ground-truth
+    engine. Periodic on purpose: the SpectralConv2d potential assumes a
+    periodic domain, so truth and inductive bias agree.
+
+    Returns (qs, ps), each (n_traj, steps + 1, H, W, 1) on `device`.
+    """
+    qs, ps = [], []
+    for _ in range(n_traj):
+        q0 = _smooth_field_2d(1, H, W, generator, n_modes, device)  # (1, H, W)
+        p0 = torch.randn(1, H, W, generator=generator, device=device) * 0.3
+
+        q = q0.unsqueeze(-1)   # (1, H, W, 1)
+        p = p0.unsqueeze(-1)
+        c2 = c * c
+
+        def accel(pos: torch.Tensor) -> torch.Tensor:
+            lap = (torch.roll(pos, 1, dims=1) + torch.roll(pos, -1, dims=1)
+                   + torch.roll(pos, 1, dims=2) + torch.roll(pos, -1, dims=2)
+                   - 4.0 * pos)
+            return c2 * lap
+
+        q_list, p_list = [q], [p]
+        a = accel(q)
+        for _ in range(steps):
+            q, p, a = integrate_verlet(q, p, accel, dt, accel=a)
+            q_list.append(q)
+            p_list.append(p)
+        qs.append(torch.stack(q_list))
+        ps.append(torch.stack(p_list))
+    return (torch.cat(qs, dim=1).permute(1, 0, 2, 3, 4),
+            torch.cat(ps, dim=1).permute(1, 0, 2, 3, 4))
+
+
+def _smooth_field_2d(n_traj: int, H: int, W: int, generator: torch.Generator,
+                     n_modes: int, device: str = "cpu") -> torch.Tensor:
+    """Random smooth 2D field: low Fourier modes on a H x W torus. Returns
+    (n_traj, H, W)."""
+    xs = torch.arange(H, dtype=torch.float32, device=device)
+    ys = torch.arange(W, dtype=torch.float32, device=device)
+    field = torch.zeros(n_traj, H, W, device=device)
+    for mx in range(1, n_modes + 1):
+        for my in range(1, n_modes + 1):
+            amp = torch.rand(n_traj, generator=generator, device=device) / (mx * my)
+            phase = torch.rand(n_traj, generator=generator, device=device) * 2.0 * math.pi
+            wave = torch.sin(2.0 * math.pi * mx * xs[:, None] / H
+                             + 2.0 * math.pi * my * ys[None, :] / W)
+            field += amp[:, None, None] * (wave[None] + phase[:, None, None])
+    return field

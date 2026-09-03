@@ -117,7 +117,9 @@ v0.1 验证了核心命题：**物理写进架构（硬约束）优于物理写�
 
 待办：P2 扩展（N-body/非可分/概率化）为后续版本。
 
-**P2-1 进展（N-body）**：`datasets.gen_nbody`（引力 + 软碰撞 + 盒子反射，隐藏质量场）+ `pairwise_potential.PairwisePotential`（径向对势，平移/置换/旋转三重不变——修掉了一个"向量对势非偶函数导致置换不变性失效"的实现 bug）。本地测试 30/30 通过。完整 N-body 训练实验待远程恢复。
+**P2-1 进展（N-body）**：`datasets.gen_nbody`（引力 + 软碰撞 + 盒子反射，隐藏质量场）+ `pairwise_potential.PairwisePotential`（径向对势，平移/置换/旋转三重不变——修掉了一个"向量对势非偶函数导致置换不变性失效"的实现 bug）+ `NBodyHamiltonianHead`（等质量动能 + 对势 + velocity-Verlet，守恒测试锁定）+ `LiquidNBodyModel` + `benchmarks/nbody_eval.py`。本地测试 31/31 通过。完整训练实验待远程恢复。
+
+**P2 进展（2D 谱算子 + 多 seed）**：`SpectralConv2d` / `FNOBlock2d` / `OperatorPotential2d` / `OperatorHamiltonianHead2d`（2D 网格场，分辨率不变，守恒测试 2.9e-7）+ `datasets.gen_wave_2d`（2D 周期膜，velocity-Verlet 真值漂移 1.2e-4 有界）+ 2D 测试（谱层数值对齐、平移等变、守恒、分辨率）。`field_eval`/`nbody_eval` 加 `--n_seeds` 多 seed 评估协议（均值±std，解决 M2 的 seed 敏感性）。本地测试 **36/36 通过**。
 
 ---
 

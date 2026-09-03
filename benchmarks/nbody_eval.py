@@ -114,6 +114,8 @@ def main():
     ap.add_argument("--lr_decay", type=float, default=1.0)
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n_seeds", type=int, default=1,
+                    help="repeat training across seeds, report mean +/- std")
     ap.add_argument("--device", default="cpu", help="cpu | cuda")
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
     args = ap.parse_args()
@@ -129,8 +131,8 @@ def main():
           f"mass~U[{args.mass_lo},{args.mass_hi}] t_obs={args.t_obs} "
           f"k_train={args.k_train} eval_k={args.eval_k}", flush=True)
 
-    def build(name):
-        torch.manual_seed(args.seed)
+    def build(name, seed):
+        torch.manual_seed(seed)
         ham = NBodyHamiltonianHead(args.dim, hidden_dim=args.hidden,
                                    depth=args.depth, context_dim=args.context_dim)
         if name == "liquid_nbody":
@@ -142,17 +144,29 @@ def main():
 
     results = {}
     for name in ("liquid_nbody", "static_nbody"):
-        model = build(name)
-        n_par = sum(p.numel() for p in model.parameters())
-        floss = train_semigroup(model, qs[tr], vs[tr], args.t_obs, args.k_train,
-                                args.train_steps, args.lr, args.batch, args.seed,
-                                lr_decay=args.lr_decay)
-        mse, drift = evaluate(model, qs[ev], vs[ev], mass[ev], args.t_obs,
-                              args.eval_k, args.dt, args.G, args.softening)
+        mses, drifts = [], []
+        n_par = sum(p.numel() for p in build(name, args.seed).parameters())
+        for s in range(args.n_seeds):
+            seed = args.seed + s
+            model = build(name, seed)
+            floss = train_semigroup(model, qs[tr], vs[tr], args.t_obs, args.k_train,
+                                    args.train_steps, args.lr, args.batch, seed,
+                                    lr_decay=args.lr_decay)
+            mse, drift = evaluate(model, qs[ev], vs[ev], mass[ev], args.t_obs,
+                                  args.eval_k, args.dt, args.G, args.softening)
+            mses.append(mse)
+            drifts.append(drift)
+        mse_mean = sum(mses) / len(mses)
+        drift_mean = sum(drifts) / len(drifts)
+        mse_std = (sum((m - mse_mean) ** 2 for m in mses) / len(mses)) ** 0.5
+        drift_std = (sum((d - drift_mean) ** 2 for d in drifts) / len(drifts)) ** 0.5
         results[name] = {"params": n_par, "train_loss": floss,
-                         "rollout_mse": mse, "energy_drift_max": drift}
-        print(f"  [{name:14s}] params {n_par:>6,} | train_loss {floss:.4e} | "
-              f"rollout_mse {mse:.4e} | energy_drift(max) {drift:.4e}", flush=True)
+                         "rollout_mse": mse_mean, "rollout_mse_std": mse_std,
+                         "energy_drift_max": drift_mean,
+                         "energy_drift_max_std": drift_std}
+        print(f"  [{name:14s}] params {n_par:>6,} | n_seeds {args.n_seeds} | "
+              f"rollout_mse {mse_mean:.4e} +/- {mse_std:.2e} | "
+              f"energy_drift(max) {drift_mean:.4e} +/- {drift_std:.2e}", flush=True)
 
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "nbody_eval.json"), "w") as f:

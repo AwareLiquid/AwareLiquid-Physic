@@ -42,7 +42,7 @@ from typing import Optional, Tuple
 import torch
 import torch.nn as nn
 
-from .operator_potential import FiLM, OperatorPotential
+from .operator_potential import FiLM, OperatorPotential, OperatorPotential2d
 
 
 def _energy_mlp(dim: int, hidden_dim: int, depth: int) -> nn.Sequential:
@@ -374,6 +374,75 @@ class OperatorHamiltonianHead(nn.Module):
                 ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Integrate `steps` symplectic steps under a FIXED context. Returns
         (qs, ps), each (steps + 1, ..., N, dim) including the initial state."""
+        qs, ps = [q0], [p0]
+        q, p = q0, p0
+        for _ in range(int(steps)):
+            q, p = self.step(q, p, dt, context)
+            qs.append(q)
+            ps.append(p)
+        return torch.stack(qs), torch.stack(ps)
+
+
+class OperatorHamiltonianHead2d(nn.Module):
+    """2D-grid version of OperatorHamiltonianHead (P2): H(q,p|ctx) = T(p) +
+    V_2d(q|ctx) with a SpectralConv2d FNO potential. q, p are (..., H, W, dim);
+    H, W arbitrary (resolution-invariant). Velocity-Verlet unchanged."""
+
+    def __init__(self, dim: int, width: int = 32, modes_x: int = 12,
+                 modes_y: int = 12, fno_depth: int = 4, context_dim: int = 0,
+                 hidden_dim: int = 64, t_depth: int = 2, reflect_pad: int = 8):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.T = _energy_mlp(dim, hidden_dim, t_depth)
+        self.V = OperatorPotential2d(dim, width=width, modes_x=modes_x,
+                                     modes_y=modes_y, depth=fno_depth,
+                                     context_dim=context_dim,
+                                     reflect_pad=reflect_pad)
+
+    def energy(self, q: torch.Tensor, p: torch.Tensor,
+               context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        lead = q.shape[:-3]
+        qf = q.reshape(-1, *q.shape[-3:])
+        pf = p.reshape(-1, *p.shape[-3:])
+        t = self.T(pf).squeeze(-1).sum(dim=(-1, -2))       # (B',)
+        if context is not None:
+            cf = context
+            for _ in range(len(lead) - (context.dim() - 1)):
+                cf = cf.unsqueeze(0)
+            cf = cf.expand(*lead, -1).reshape(-1, context.shape[-1])
+        else:
+            cf = None
+        e = t + self.V(qf, cf)                              # (B',)
+        return e.reshape(lead)
+
+    def _grad(self, energy_fn, x: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if not x.requires_grad:
+            x = x.requires_grad_(True)
+        energy = energy_fn(x) if context is None else energy_fn(x, context)
+        (g,) = torch.autograd.grad(energy.sum(), x, create_graph=self.training)
+        return g
+
+    def dT_dp(self, p: torch.Tensor) -> torch.Tensor:
+        return self._grad(lambda x: self.T(x).squeeze(-1).sum(dim=(-1, -2)), p)
+
+    def dV_dq(self, q: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return self._grad(self.V, q, context)
+
+    def step(self, q: torch.Tensor, p: torch.Tensor, dt: float,
+             context: Optional[torch.Tensor] = None
+             ) -> Tuple[torch.Tensor, torch.Tensor]:
+        dt = float(dt)
+        p_half = p - 0.5 * dt * self.dV_dq(q, context)
+        q_next = q + dt * self.dT_dp(p_half)
+        p_next = p_half - 0.5 * dt * self.dV_dq(q_next, context)
+        return q_next, p_next
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, steps: int, dt: float,
+                context: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
         qs, ps = [q0], [p0]
         q, p = q0, p0
         for _ in range(int(steps)):
