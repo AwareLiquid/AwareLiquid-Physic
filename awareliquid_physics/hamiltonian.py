@@ -383,6 +383,108 @@ class OperatorHamiltonianHead(nn.Module):
         return torch.stack(qs), torch.stack(ps)
 
 
+class NonseparableHamiltonianHead(nn.Module):
+    """H(q,p|ctx) = T(p) + V(q|ctx) + C(q,p|ctx) — a NON-separable Hamiltonian
+    (P2-2) with a velocity-dependent coupling C (magnetic / Coriolis terms),
+    integrated by IMPLICIT MIDPOINT.
+
+    Velocity-Verlet does NOT apply to non-separable H (it needs a T(p)+V(q)
+    split). Implicit midpoint is symplectic for ANY smooth H, so energy
+    conservation stays architectural: bounded O(dt^2) drift, no secular growth.
+    Each step runs `iters` fixed-point iterations of
+
+        q* = q + dt dH/dp((q+q*)/2, (p+p*)/2)
+        p* = p - dt dH/dq((q+q*)/2, (p+p*)/2)
+
+    q, p are (..., dim). context_dim > 0 conditions V and C.
+    """
+
+    def __init__(self, dim: int, hidden_dim: int = 64, depth: int = 2,
+                 context_dim: int = 0, iters: int = 4):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.iters = int(iters)
+        self.T = _energy_mlp(dim, hidden_dim, depth)
+        self.V = _energy_mlp(dim + context_dim, hidden_dim, depth)
+        self.C = _energy_mlp(2 * dim + context_dim, hidden_dim, depth)
+
+    def energy(self, q: torch.Tensor, p: torch.Tensor,
+               context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        t = self.T(p).squeeze(-1)
+        v_in = q if context is None else torch.cat([q, context], dim=-1)
+        c_in = torch.cat([q, p], dim=-1) if context is None else \
+            torch.cat([q, p, context], dim=-1)
+        return t + self.V(v_in).squeeze(-1) + self.C(c_in).squeeze(-1)
+
+    def _grad(self, energy_fn, x: torch.Tensor) -> torch.Tensor:
+        if not x.requires_grad:
+            x = x.requires_grad_(True)
+        (g,) = torch.autograd.grad(energy_fn(x).sum(), x,
+                                   create_graph=self.training)
+        return g
+
+    def dT_dp(self, p: torch.Tensor) -> torch.Tensor:
+        return self._grad(lambda x: self.T(x).squeeze(-1), p)
+
+    def dV_dq(self, q: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        def fn(x):
+            v_in = x if context is None else torch.cat([x, context], dim=-1)
+            return self.V(v_in).squeeze(-1)
+        return self._grad(fn, q)
+
+    def dC_dq(self, q: torch.Tensor, p: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        def fn(x):
+            c_in = torch.cat([x, p], dim=-1)
+            if context is not None:
+                c_in = torch.cat([c_in, context], dim=-1)
+            return self.C(c_in).squeeze(-1)
+        return self._grad(fn, q)
+
+    def dC_dp(self, q: torch.Tensor, p: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        def fn(x):
+            c_in = torch.cat([q, x], dim=-1)
+            if context is not None:
+                c_in = torch.cat([c_in, context], dim=-1)
+            return self.C(c_in).squeeze(-1)
+        return self._grad(fn, p)
+
+    def _q_dot(self, q: torch.Tensor, p: torch.Tensor,
+               context: Optional[torch.Tensor]) -> torch.Tensor:
+        return self.dT_dp(p) + self.dC_dp(q, p, context)
+
+    def _p_dot(self, q: torch.Tensor, p: torch.Tensor,
+               context: Optional[torch.Tensor]) -> torch.Tensor:
+        return -(self.dV_dq(q, context) + self.dC_dq(q, p, context))
+
+    def step(self, q: torch.Tensor, p: torch.Tensor, dt: float,
+             context: Optional[torch.Tensor] = None
+             ) -> Tuple[torch.Tensor, torch.Tensor]:
+        dt = float(dt)
+        q_next = q + dt * self._q_dot(q, p, context)
+        p_next = p + dt * self._p_dot(q, p, context)
+        for _ in range(self.iters):
+            qm = (q + q_next) * 0.5
+            pm = (p + p_next) * 0.5
+            q_next = q + dt * self._q_dot(qm, pm, context)
+            p_next = p + dt * self._p_dot(qm, pm, context)
+        return q_next, p_next
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, steps: int, dt: float,
+                context: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
+        qs, ps = [q0], [p0]
+        q, p = q0, p0
+        for _ in range(int(steps)):
+            q, p = self.step(q, p, dt, context)
+            qs.append(q)
+            ps.append(p)
+        return torch.stack(qs), torch.stack(ps)
+
+
 class OperatorHamiltonianHead2d(nn.Module):
     """2D-grid version of OperatorHamiltonianHead (P2): H(q,p|ctx) = T(p) +
     V_2d(q|ctx) with a SpectralConv2d FNO potential. q, p are (..., H, W, dim);

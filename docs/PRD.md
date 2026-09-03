@@ -121,6 +121,8 @@ v0.1 验证了核心命题：**物理写进架构（硬约束）优于物理写�
 
 **P2 进展（2D 谱算子 + 多 seed）**：`SpectralConv2d` / `FNOBlock2d` / `OperatorPotential2d` / `OperatorHamiltonianHead2d`（2D 网格场，分辨率不变，守恒测试 2.9e-7）+ `datasets.gen_wave_2d`（2D 周期膜，velocity-Verlet 真值漂移 1.2e-4 有界）+ 2D 测试（谱层数值对齐、平移等变、守恒、分辨率）。`field_eval`/`nbody_eval` 加 `--n_seeds` 多 seed 评估协议（均值±std，解决 M2 的 seed 敏感性）。本地测试 **36/36 通过**。
 
+**P2-2 进展（非可分哈密顿量）**：`NonseparableHamiltonianHead`——H(q,p|ctx) = T(p) + V(q|ctx) + C(q,p|ctx)（速度依赖耦合，磁/科里奥利力），**隐式中点积分**（velocity-Verlet 不适用于非可分 H；隐式中点对任意光滑 H 辛 → 守恒仍是架构性质，随机权重漂移 1.6e-6 有界）。测试：守恒、耦合项真实速度依赖、梯度流到 T/V/C。本地测试 **39/39 通过**。
+
 ---
 
 *本 PRD 与 `docs/architecture.md`（技术架构）配套阅读；架构决策细节以 ADR 为准。*

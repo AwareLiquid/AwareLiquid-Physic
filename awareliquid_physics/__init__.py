@@ -14,7 +14,8 @@ Scope: continuous-state trajectory prediction, validated on physics metrics
 from .datasets import (gen_nbody, gen_wave_1d, gen_wave_1d_inhomogeneous,
                        gen_wave_2d)
 from .hamiltonian import (FiLMHamiltonianHead, HamiltonianHead,
-                          MLPFieldHead, OperatorHamiltonianHead,
+                          MLPFieldHead, NonseparableHamiltonianHead,
+                          OperatorHamiltonianHead,
                           OperatorHamiltonianHead2d)
 from .liquid_core import LiquidCore
 from .model import (GRUSeqModel, LiquidHamiltonianModel,
@@ -32,6 +33,7 @@ __all__ = [
     "MLPFieldHead",
     "OperatorHamiltonianHead",
     "OperatorHamiltonianHead2d",
+    "NonseparableHamiltonianHead",
     "NBodyHamiltonianHead",
     "LiquidCore",
     "LiquidHamiltonianModel",
