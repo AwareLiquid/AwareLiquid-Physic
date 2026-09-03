@@ -59,11 +59,11 @@ def make_models(args):
         phase_dim=1, d_model=args.d_model, context_dim=args.context_dim,
         n_scales=args.n_scales, modes=args.modes, width=args.width,
         fno_depth=args.fno_depth, hidden_dim=args.hidden, t_depth=2,
-        dt=args.dt, core_dt=1.0, reflect_pad=args.reflect_pad)
+        dt=args.dt, core_dt=1.0, reflect_pad=args.reflect_pad).to(args.device)
     static_ham = OperatorHamiltonianHead(
         dim=1, width=args.width, modes=args.modes, fno_depth=args.fno_depth,
         context_dim=args.context_dim, hidden_dim=args.hidden, t_depth=2,
-        reflect_pad=args.reflect_pad)
+        reflect_pad=args.reflect_pad).to(args.device)
     static = StaticOperatorWrapper(static_ham, args.dt)
     return liquid, static
 
@@ -93,7 +93,8 @@ def evaluate(model, qs, ps, c_field, t_obs, eval_k, dt):
 def resolution_test(model, args, g):
     """Zero-shot super-resolution: trained at N_train, evaluated at N_test."""
     n_traj, steps = args.n_res_eval, args.gen_steps
-    qs, ps = gen_wave_1d(n_traj, steps, args.dt, args.n_res_test, args.c_eval, g)
+    qs, ps = gen_wave_1d(n_traj, steps, args.dt, args.n_res_test, args.c_eval, g,
+                         device=args.device)
     qs, ps = qs[:n_traj], ps[:n_traj]
     t_obs, k = args.t_obs, args.eval_k
     model.eval()
@@ -137,6 +138,7 @@ def main():
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--lr_decay", type=float, default=1.0,
                     help="per-step exponential lr decay (1.0 = constant)")
+    ap.add_argument("--device", default="cpu", help="cpu | cuda")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
@@ -149,22 +151,23 @@ def main():
         # trajectory — a static potential can only approximate an average medium.
         qs, ps, cfields = gen_wave_1d_inhomogeneous(
             n, args.gen_steps, args.dt, args.n_nodes,
-            c_mean=args.c_eval, c_var=args.c_var, generator=g)
+            c_mean=args.c_eval, c_var=args.c_var, generator=g,
+            device=args.device)
         print(f"field family (INHOMOGENEOUS): N={args.n_nodes} "
               f"c(x) = {args.c_eval} +/- {args.c_var} per trajectory", flush=True)
     else:
         # Family of constant wave speeds: half at c_eval, rest spread over
         # [c_lo, c_hi] — per-trajectory hidden scalar the context must identify.
         qs, ps = gen_wave_1d(n, args.gen_steps, args.dt, args.n_nodes,
-                             c=args.c_eval, generator=g)
+                             c=args.c_eval, generator=g, device=args.device)
         g2 = torch.Generator().manual_seed(args.seed + 1)
-        cs = torch.empty(n)
+        cs = torch.empty(n, device=args.device)
         cs[:n // 2] = args.c_eval
         cs[n // 2:] = args.c_lo + (args.c_hi - args.c_lo) * torch.rand(
-            n - n // 2, generator=g2)
+            n - n // 2, generator=g2, device=args.device)
         for i in range(n // 2, n):
             qi, pi = gen_wave_1d(1, args.gen_steps, args.dt, args.n_nodes,
-                                 c=cs[i].item(), generator=g2)
+                                 c=cs[i].item(), generator=g2, device=args.device)
             qs[i], ps[i] = qi[0], pi[0]
         cfields = cs[:, None].expand(n, args.n_nodes)
         print(f"field family: N={args.n_nodes} c~{{{args.c_lo}..{args.c_hi}}} "

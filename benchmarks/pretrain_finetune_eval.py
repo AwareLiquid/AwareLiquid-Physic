@@ -38,7 +38,7 @@ def build_model(args, seed):
         phase_dim=1, d_model=args.d_model, context_dim=args.context_dim,
         n_scales=args.n_scales, modes=args.modes, width=args.width,
         fno_depth=args.fno_depth, hidden_dim=args.hidden, t_depth=2,
-        dt=args.dt, core_dt=1.0, reflect_pad=args.reflect_pad)
+        dt=args.dt, core_dt=1.0, reflect_pad=args.reflect_pad).to(args.device)
 
 
 def evaluate(model, qs, ps, t_obs, eval_k, c):
@@ -78,6 +78,7 @@ def main():
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--lr_decay", type=float, default=1.0,
                     help="per-step exponential lr decay (1.0 = constant)")
+    ap.add_argument("--device", default="cpu", help="cpu | cuda")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
@@ -90,13 +91,15 @@ def main():
     families = []
     for i, c in enumerate((0.8, 1.0, 1.2)):
         qs, ps = gen_wave_1d(args.n_pretrain_per_speed, args.gen_steps, args.dt,
-                             args.n_nodes, c, torch.Generator().manual_seed(args.seed + i))
+                             args.n_nodes, c, torch.Generator().manual_seed(args.seed + i),
+                             device=args.device)
         families.append((qs, ps))
 
     # Few-shot + eval sets at the UNSEEN speed.
     qs_t, ps_t = gen_wave_1d(args.n_shot + args.n_few_eval, args.gen_steps,
                              args.dt, args.n_nodes, args.c_target,
-                             torch.Generator().manual_seed(args.seed + 100))
+                             torch.Generator().manual_seed(args.seed + 100),
+                             device=args.device)
     qs_few, ps_few = qs_t[:args.n_shot], ps_t[:args.n_shot]
     qs_ev, ps_ev = qs_t[args.n_shot:], ps_t[args.n_shot:]
 

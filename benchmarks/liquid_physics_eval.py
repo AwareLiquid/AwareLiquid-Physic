@@ -74,13 +74,14 @@ class LiquidFilmWrapper(torch.nn.Module):
         return qs, ps, ctx
 
 
-def gen_spring_family(n_traj, steps, dt, dim, omega_lo, omega_hi, g):
+def gen_spring_family(n_traj, steps, dt, dim, omega_lo, omega_hi, g,
+                      device="cpu"):
     """Harmonic oscillators with a per-trajectory random stiffness omega ~ U[lo,hi].
     Returns qs, ps (n, steps+1, dim) and omegas (n,). Exact analytic rollout."""
-    omega = omega_lo + (omega_hi - omega_lo) * torch.rand(n_traj, generator=g)  # (n,)
-    q0 = torch.randn(n_traj, dim, generator=g)
-    p0 = torch.randn(n_traj, dim, generator=g)
-    t = torch.arange(steps + 1, dtype=torch.float32) * dt                       # (S,)
+    omega = omega_lo + (omega_hi - omega_lo) * torch.rand(n_traj, generator=g, device=device)  # (n,)
+    q0 = torch.randn(n_traj, dim, generator=g, device=device)
+    p0 = torch.randn(n_traj, dim, generator=g, device=device)
+    t = torch.arange(steps + 1, dtype=torch.float32, device=device) * dt     # (S,)
     wt = omega.view(-1, 1) * t.view(1, -1)                                      # (n, S)
     c = torch.cos(wt).unsqueeze(-1); s = torch.sin(wt).unsqueeze(-1)            # (n,S,1)
     w = omega.view(-1, 1, 1)
@@ -175,6 +176,7 @@ def main():
     ap.add_argument("--lr", type=float, default=3e-3)
     ap.add_argument("--lr_decay", type=float, default=1.0,
                     help="per-step exponential lr decay (1.0 = constant)")
+    ap.add_argument("--device", default="cpu", help="cpu | cuda")
     ap.add_argument("--batch", type=int, default=64)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out_dir", default="benchmarks/physics_out")
@@ -182,7 +184,8 @@ def main():
 
     g = torch.Generator().manual_seed(args.seed)
     qs, ps, omega = gen_spring_family(args.n_train + args.n_eval, args.gen_steps,
-                                      args.dt, args.dim, args.omega_lo, args.omega_hi, g)
+                                      args.dt, args.dim, args.omega_lo, args.omega_hi,
+                                      g, device=args.device)
     tr, ev = slice(0, args.n_train), slice(args.n_train, None)
     print(f"family: dim={args.dim} omega~U[{args.omega_lo},{args.omega_hi}] "
           f"t_obs={args.t_obs} k_train={args.k_train} eval_k={args.eval_k} "
@@ -204,7 +207,7 @@ def main():
 
     results = {}
     for name in ("liquid_ham", "liquid_ham_film", "static_ham", "gru_seq"):
-        model = build(name)
+        model = build(name).to(args.device)
         n_par = sum(p.numel() for p in model.parameters())
         floss = train(model, qs[tr], ps[tr], args.t_obs, args.k_train,
                       args.train_steps, args.lr, args.batch, args.seed,

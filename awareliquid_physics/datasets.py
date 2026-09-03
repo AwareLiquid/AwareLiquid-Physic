@@ -24,8 +24,8 @@ from .physics_ops import integrate_verlet
 
 
 def gen_wave_1d(n_traj: int, steps: int, dt: float, N: int, c: float,
-                generator: torch.Generator, n_modes: int = 5
-                ) -> Tuple[torch.Tensor, torch.Tensor]:
+                generator: torch.Generator, n_modes: int = 5,
+                device: str = "cpu") -> Tuple[torch.Tensor, torch.Tensor]:
     """A family of 1D periodic strings (linear wave equation, discretised).
 
     Hamiltonian:  H = sum_i [ p_i^2/2 + c^2/2 (q_{i+1} - q_i)^2 ]   (cyclic)
@@ -38,12 +38,12 @@ def gen_wave_1d(n_traj: int, steps: int, dt: float, N: int, c: float,
     O(dt^2) bounded energy error) — the ground-truth engine the learned
     models are scored against: compute, don't memorise.
 
-    Returns (qs, ps), each (n_traj, steps + 1, N, 1).
+    Returns (qs, ps), each (n_traj, steps + 1, N, 1) on `device`.
     """
     qs, ps = [], []
     for b in range(n_traj):
-        q0 = _smooth_field(n_traj, N, generator, n_modes)[b:b + 1]  # (1, N)
-        p0 = torch.randn(1, N, generator=generator) * 0.3
+        q0 = _smooth_field(n_traj, N, generator, n_modes, device)[b:b + 1]  # (1, N)
+        p0 = torch.randn(1, N, generator=generator, device=device) * 0.3
 
         q = q0.unsqueeze(-1)   # (1, N, 1)
         p = p0.unsqueeze(-1)
@@ -67,7 +67,8 @@ def gen_wave_1d(n_traj: int, steps: int, dt: float, N: int, c: float,
 
 def gen_wave_1d_inhomogeneous(n_traj: int, steps: int, dt: float, N: int,
                                c_mean: float, c_var: float,
-                               generator: torch.Generator, n_modes: int = 4
+                               generator: torch.Generator, n_modes: int = 4,
+                               device: str = "cpu"
                                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """A family of 1D INHOMOGENEOUS periodic strings: the wave speed is a
     smooth random FIELD c(x) drawn per trajectory (a few low Fourier modes
@@ -84,14 +85,14 @@ def gen_wave_1d_inhomogeneous(n_traj: int, steps: int, dt: float, N: int,
     buys accuracy. Ground truth via velocity-Verlet as before.
 
     Returns (qs, ps, cs): qs/ps (n_traj, steps+1, N, 1), cs (n_traj, N) the
-    per-trajectory wave-speed fields (for the energy diagnostic).
+    per-trajectory wave-speed fields (for the energy diagnostic), on `device`.
     """
     qs, ps, cfields = [], [], []
     for _ in range(n_traj):
-        c = c_mean + c_var * _smooth_field(1, N, generator, n_modes)  # (1, N)
+        c = c_mean + c_var * _smooth_field(1, N, generator, n_modes, device)  # (1, N)
         c = c.clamp_min(0.2 * c_mean)
-        q0 = _smooth_field(1, N, generator, 5)                        # (1, N)
-        p0 = torch.randn(1, N, generator=generator) * 0.3
+        q0 = _smooth_field(1, N, generator, 5, device)                        # (1, N)
+        p0 = torch.randn(1, N, generator=generator, device=device) * 0.3
 
         q = q0.unsqueeze(-1)   # (1, N, 1)
         p = p0.unsqueeze(-1)
@@ -118,14 +119,14 @@ def gen_wave_1d_inhomogeneous(n_traj: int, steps: int, dt: float, N: int,
 
 
 def _smooth_field(n_traj: int, N: int, generator: torch.Generator,
-                  n_modes: int) -> torch.Tensor:
+                  n_modes: int, device: str = "cpu") -> torch.Tensor:
     """Random smooth field: a few low Fourier modes with random amplitudes and
-    phases. Returns (n_traj, N)."""
-    x = torch.arange(N, dtype=torch.float32)
-    field = torch.zeros(n_traj, N)
+    phases. Returns (n_traj, N) on `device`."""
+    x = torch.arange(N, dtype=torch.float32, device=device)
+    field = torch.zeros(n_traj, N, device=device)
     for m in range(1, n_modes + 1):
-        amp = torch.rand(n_traj, generator=generator) * (0.5 / m)
-        phase = torch.rand(n_traj, generator=generator) * 2.0 * math.pi
+        amp = torch.rand(n_traj, generator=generator, device=device) * (0.5 / m)
+        phase = torch.rand(n_traj, generator=generator, device=device) * 2.0 * math.pi
         field += amp.unsqueeze(-1) * torch.sin(
             2.0 * math.pi * m * x / N + phase.unsqueeze(-1))
     return field
