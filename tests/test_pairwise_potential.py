@@ -17,7 +17,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from awareliquid_physics.datasets import gen_nbody
-from awareliquid_physics.pairwise_potential import PairwisePotential
+from awareliquid_physics.pairwise_potential import (NBodyHamiltonianHead,
+                                                    PairwisePotential)
 
 
 def test_pairwise_potential_translation_invariant():
@@ -74,9 +75,31 @@ def test_gen_nbody_shapes_and_containment():
     print(f"[4] gen_nbody: {qs.shape}, contained in box, mass in range")
 
 
+def test_nbody_head_conserves_energy_by_construction():
+    """The hard-constraint thesis on irregular nodes: velocity-Verlet on the
+    pair-potential Hamiltonian has bounded energy drift with NO secular growth,
+    for a RANDOM untrained potential."""
+    torch.manual_seed(4)
+    head = NBodyHamiltonianHead(dim=2, hidden_dim=32, depth=2, context_dim=0)
+    head.eval()
+    q0 = torch.randn(3, 8, 2)
+    v0 = torch.randn(3, 8, 2) * 0.3
+    with torch.enable_grad():
+        qs, vs = head.rollout(q0, v0, steps=300, dt=0.02)
+        def E(t):
+            return head.energy(qs[t].detach(), vs[t].detach()).detach()
+        e0, e100, e300 = E(0), E(100), E(300)
+        d100 = ((e100 - e0).abs() / e0.abs().clamp_min(1e-6)).max().item()
+        d300 = ((e300 - e0).abs() / e0.abs().clamp_min(1e-6)).max().item()
+    print(f"[5] random N-body head drift: 100 steps {d100:.2e}, 300 steps {d300:.2e}")
+    assert d300 < 0.05, f"unbounded energy drift on random N-body head: {d300:.2e}"
+    assert d300 < 10 * d100 + 1e-4, "drift grows secularly"
+
+
 if __name__ == "__main__":
     test_pairwise_potential_translation_invariant()
     test_pairwise_potential_permutation_invariant()
     test_pairwise_potential_scalar_and_conditioned()
     test_gen_nbody_shapes_and_containment()
+    test_nbody_head_conserves_energy_by_construction()
     print("all pairwise-potential / nbody tests passed")

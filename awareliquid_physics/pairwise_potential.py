@@ -19,7 +19,7 @@ datasets.gen_nbody.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -63,3 +63,66 @@ class PairwisePotential(nn.Module):
             r = torch.cat([r, ctx], dim=-1)
         e = self.phi(r).squeeze(-1)                          # (B, M)
         return e.sum(dim=1)                                  # (B,)
+
+
+class NBodyHamiltonianHead(nn.Module):
+    """H(q, v | ctx) = T(v) + V_pair(q | ctx) for unit-mass N-body systems.
+
+    q, v are (..., N, dim) positions / velocities (the physics_ops convention).
+    T(v) = 0.5 * sum_i |v_i|^2 (unit mass, analytic dT/dv = v). V is the radial
+    PairwisePotential. Velocity-Verlet (kick-drift-kick) — identical scheme to
+    the other heads, so energy conservation stays architectural.
+
+    This is the P2-1 head: the same hard-constraint route applied to
+    irregular-node (particle) systems, where the pair potential replaces the
+    FNO spectral layer.
+    """
+
+    def __init__(self, dim: int, hidden_dim: int = 64, depth: int = 2,
+                 context_dim: int = 0):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.V = PairwisePotential(dim, hidden_dim, depth, context_dim)
+
+    def energy(self, q: torch.Tensor, v: torch.Tensor,
+               context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        lead = q.shape[:-2]
+        qf = q.reshape(-1, *q.shape[-2:])
+        vf = v.reshape(-1, *v.shape[-2:])
+        t = 0.5 * vf.pow(2).sum(dim=(-1, -2))                # (B',)
+        if context is not None:
+            cf = context.reshape(-1, context.shape[-1])
+        else:
+            cf = None
+        e = t + self.V(qf, cf)                               # (B',)
+        return e.reshape(lead)
+
+    def dV_dq(self, q: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if not q.requires_grad:
+            q = q.requires_grad_(True)
+        (g,) = torch.autograd.grad(self.V(q, context).sum(), q,
+                                   create_graph=self.training)
+        return g
+
+    def step(self, q: torch.Tensor, v: torch.Tensor, dt: float,
+             context: Optional[torch.Tensor] = None
+             ) -> Tuple[torch.Tensor, torch.Tensor]:
+        dt = float(dt)
+        a = -self.dV_dq(q, context)                          # force = -dV/dq
+        v_half = v + 0.5 * dt * a
+        q_next = q + dt * v_half                             # dT/dv = v (unit mass)
+        v_next = v_half + 0.5 * dt * (-self.dV_dq(q_next, context))
+        return q_next, v_next
+
+    def rollout(self, q0: torch.Tensor, v0: torch.Tensor, steps: int, dt: float,
+                context: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor]:
+        qs, vs = [q0], [v0]
+        q, v = q0, v0
+        for _ in range(int(steps)):
+            q, v = self.step(q, v, dt, context)
+            qs.append(q)
+            vs.append(v)
+        return torch.stack(qs), torch.stack(vs)

@@ -31,6 +31,7 @@ import torch.nn as nn
 
 from .hamiltonian import HamiltonianHead, OperatorHamiltonianHead
 from .liquid_core import LiquidCore
+from .pairwise_potential import NBodyHamiltonianHead
 
 
 class LiquidHamiltonianModel(nn.Module):
@@ -133,6 +134,49 @@ class LiquidOperatorHamiltonianModel(nn.Module):
         q0, p0 = q_obs[:, -1], p_obs[:, -1]
         qs, ps = self.rollout(q0, p0, context, k)
         return qs, ps, context
+
+
+class LiquidNBodyModel(nn.Module):
+    """v0.2 (P2-1): liquid system-ID + N-body pair-potential symplectic rollout.
+
+    Phase state is (q, v) = (positions, velocities) of N particles (N
+    arbitrary — resolution-invariant via per-node encoding + mean pooling).
+    The liquid core reads the observed prefix and infers a context (the hidden
+    mass distribution), which conditions the radial PairwisePotential; a
+    velocity-Verlet rollout then predicts the future with energy conserved by
+    construction. The irregular-node counterpart of LiquidOperatorHamiltonianModel.
+    """
+
+    def __init__(self, dim: int, d_model: int = 64, context_dim: int = 16,
+                 n_scales: int = 4, hidden_dim: int = 64, depth: int = 2,
+                 dt: float = 0.05, core_dt: float = 1.0):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.dt = float(dt)
+
+        self.node_enc = nn.Linear(2 * dim, d_model)
+        self.core = LiquidCore(d_model, d_model, n_scales=n_scales, dt=core_dt)
+        self.context_proj = nn.Linear(d_model, context_dim)
+        self.ham = NBodyHamiltonianHead(dim, hidden_dim=hidden_dim, depth=depth,
+                                        context_dim=context_dim)
+
+    def infer_context(self, q_obs: torch.Tensor, v_obs: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([q_obs, v_obs], dim=-1)          # (B, T, N, 2*dim)
+        x = self.node_enc(x)                           # (B, T, N, d_model)
+        x = x.mean(dim=2)                              # (B, T, d_model)
+        return self.context_proj(self.core.encode(x))
+
+    def rollout(self, q0: torch.Tensor, v0: torch.Tensor, context: torch.Tensor,
+                steps: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.ham.rollout(q0, v0, steps, self.dt, context=context)
+
+    def forward(self, q_obs: torch.Tensor, v_obs: torch.Tensor, k: int
+                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        context = self.infer_context(q_obs, v_obs)
+        q0, v0 = q_obs[:, -1], v_obs[:, -1]
+        qs, vs = self.rollout(q0, v0, context, k)
+        return qs, vs, context
 
 
 class GRUSeqModel(nn.Module):
