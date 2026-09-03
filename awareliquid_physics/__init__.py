@@ -11,8 +11,8 @@ Scope: continuous-state trajectory prediction, validated on physics metrics
 (rollout MSE, energy drift). NOT a language model; no hallucination claim.
 """
 
-from .datasets import (gen_nbody, gen_wave_1d, gen_wave_1d_inhomogeneous,
-                       gen_wave_2d)
+from .datasets import (gen_driven, gen_magnetic, gen_nbody, gen_wave_1d,
+                       gen_wave_1d_inhomogeneous, gen_wave_2d)
 from .hamiltonian import (FiLMHamiltonianHead, HamiltonianHead,
                           MLPFieldHead, NonseparableHamiltonianHead,
                           OperatorHamiltonianHead,
@@ -58,6 +58,8 @@ __all__ = [
     "gen_wave_1d_inhomogeneous",
     "gen_wave_2d",
     "gen_nbody",
+    "gen_magnetic",
+    "gen_driven",
     "train_semigroup",
     "train_pretrain",
     "finetune",

@@ -172,6 +172,81 @@ def gen_nbody(n_traj: int, steps: int, dt: float, N: int, D: int,
     return (torch.stack(qs), torch.stack(ps), torch.stack(masses))
 
 
+def gen_magnetic(n_traj: int, steps: int, dt: float, B: float,
+                 generator: torch.Generator,
+                 device: str = "cpu") -> Tuple[torch.Tensor, torch.Tensor]:
+    """Charged particles in a uniform magnetic field B (2D plane, symmetric
+    gauge). NON-separable Hamiltonian:
+
+        H = 0.5 * [ (p_x + B y/2)^2 + (p_y - B x/2)^2 ]
+
+    Ground truth by RK4 (velocity-Verlet does NOT apply to non-separable H;
+    RK4 is the standard high-accuracy reference). Energy is conserved (the
+    magnetic force does no work) — a property the NonseparableHamiltonianHead
+    must recover. Returns (qs, ps), each (n_traj, steps+1, 2) (x,y positions,
+    canonical momenta). On `device`.
+    """
+    def deriv(s):
+        x, y, px, py = s[..., 0], s[..., 1], s[..., 2], s[..., 3]
+        qdx = px + 0.5 * B * y
+        qdy = py - 0.5 * B * x
+        pdx = 0.5 * B * qdy
+        pdy = -0.5 * B * qdx
+        return torch.stack([qdx, qdy, pdx, pdy], dim=-1)
+
+    qs, ps = [], []
+    for _ in range(n_traj):
+        x0 = torch.randn(1, 2, generator=generator, device=device) * 0.5
+        p0 = torch.randn(1, 2, generator=generator, device=device) * 0.5
+        s = torch.cat([x0, p0], dim=-1)                    # (1, 4)
+        q_list, p_list = [s[..., :2]], [s[..., 2:]]
+        for _ in range(steps):
+            k1 = deriv(s)
+            k2 = deriv(s + 0.5 * dt * k1)
+            k3 = deriv(s + 0.5 * dt * k2)
+            k4 = deriv(s + dt * k3)
+            s = s + dt * (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
+            q_list.append(s[..., :2])
+            p_list.append(s[..., 2:])
+        qs.append(torch.stack(q_list))
+        ps.append(torch.stack(p_list))
+    return torch.stack(qs).squeeze(-2), torch.stack(ps).squeeze(-2)
+
+
+def gen_driven(n_traj: int, steps: int, dt: float, omega0: float,
+               drive_amp: float, drive_freq: float, generator: torch.Generator,
+               device: str = "cpu") -> Tuple[torch.Tensor, torch.Tensor]:
+    """Driven harmonic oscillator: q'' = -omega0^2 q + drive_amp sin(drive_freq t).
+    A time-dependent force, so energy is NOT conserved (dH/dt != 0) — the
+    TimeConditionedHamiltonianHead benchmark case. Ground truth by RK4.
+    Returns (qs, ps), each (n_traj, steps+1, 1). On `device`.
+    """
+    def deriv(s, t):
+        q, p = s[..., 0:1], s[..., 1:2]
+        qd = p
+        pd = -omega0 ** 2 * q + drive_amp * math.sin(drive_freq * t)
+        return torch.cat([qd, pd], dim=-1)
+
+    qs, ps = [], []
+    for _ in range(n_traj):
+        q0 = torch.randn(1, 1, generator=generator, device=device) * 0.5
+        p0 = torch.randn(1, 1, generator=generator, device=device) * 0.5
+        s = torch.cat([q0, p0], dim=-1)                    # (1, 2)
+        q_list, p_list = [s[..., 0:1]], [s[..., 1:2]]
+        for n in range(steps):
+            t = n * dt
+            k1 = deriv(s, t)
+            k2 = deriv(s + 0.5 * dt * k1, t + 0.5 * dt)
+            k3 = deriv(s + 0.5 * dt * k2, t + 0.5 * dt)
+            k4 = deriv(s + dt * k3, t + dt)
+            s = s + dt * (k1 + 2 * k2 + 2 * k3 + k4) / 6.0
+            q_list.append(s[..., 0:1])
+            p_list.append(s[..., 1:2])
+        qs.append(torch.stack(q_list))
+        ps.append(torch.stack(p_list))
+    return torch.stack(qs).squeeze(-2), torch.stack(ps).squeeze(-2)
+
+
 def _smooth_field(n_traj: int, N: int, generator: torch.Generator,
                   n_modes: int, device: str = "cpu") -> torch.Tensor:
     """Random smooth field: a few low Fourier modes with random amplitudes and
