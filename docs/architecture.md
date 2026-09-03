@@ -175,6 +175,8 @@ L = L_mse + λ * mean( (H_t - H_0)² )    # 弱正则，λ 小
 | ADR-5 | 半群 all2all 训练 | Poseidon 已证数据效率收益；对辛积分 rollout 天然适配（任意步数合法） | 仅前缀→未来：每条轨迹 1 样本，数据效率瓶颈 |
 | ADR-6 | 保持 velocity-Verlet（不换高阶/隐式积分器） | 2 阶辛格式守恒保证充分；v0.1 基准可复现 | RK4/隐式：非辛 → 长程漂移；高阶级 symplectic：复杂度收益比低 |
 | ADR-7 | FiLM 层序：pre-activation（Tanh 前） | 实测：post-activation FiLM 无界 → 力场爆炸 → rollout 发散（mse 51.7）；Tanh 前调制保证每层激活有界 | post-activation：M1-FiLM 首版发散的直接原因 |
+| ADR-8 | 非可分 H 用隐式中点（P2-2） | velocity-Verlet 只对 T(p)+V(q) 可分裂 H 辛；非可分 H(q,p)（磁/科里奥利）需隐式中点——它对任意光滑 H 辛，守恒仍是架构性质（随机权重漂移 1.6e-6） | velocity-Verlet：非辛 → 漂移；广义 leapfrog：需已知分裂结构 |
+| ADR-9 | 时间条件化（P2-4）不保证守恒 | 显式时间依赖 H(q,p,t) 时 dH/dt=∂H/∂t≠0，能量不守恒是物理正确（受迫系统外力做功）；守恒保证在时间无关极限（V 忽略 t）恢复 | 强行守恒：会错误建模受迫系统 |
 
 ## 7. 风险与验证计划
 
