@@ -383,6 +383,81 @@ class OperatorHamiltonianHead(nn.Module):
         return torch.stack(qs), torch.stack(ps)
 
 
+class TimeConditionedHamiltonianHead(nn.Module):
+    """H(q,p,t|ctx) = T(p) + V(q,t|ctx) — a TIME-DEPENDENT potential (P2-4).
+
+    Continuous-time evaluation: t is an ordinary input, so the SAME model is
+    evaluated at ANY time (Poseidon-style time conditioning), for driven /
+    time-varying systems. The potential V concatenates q with the scalar time
+    (broadcast) and the context; velocity-Verlet advances q,p AND carries t
+    forward (t_next = t + dt) with a symmetric two-evaluation per step.
+
+    Honest note: with explicit time dependence, energy is NOT conserved
+    (dH/dt = dV/dt != 0) — physically correct for driven systems. Conservation
+    remains architectural for the time-independent limit (V ignoring t).
+    """
+
+    def __init__(self, dim: int, hidden_dim: int = 64, depth: int = 2,
+                 context_dim: int = 0):
+        super().__init__()
+        self.dim = int(dim)
+        self.context_dim = int(context_dim)
+        self.T = _energy_mlp(dim, hidden_dim, depth)
+        self.V = _energy_mlp(dim + 1 + context_dim, hidden_dim, depth)
+
+    def _v_input(self, q: torch.Tensor, t: torch.Tensor,
+                 context: Optional[torch.Tensor]) -> torch.Tensor:
+        tb = t
+        while tb.dim() < q.dim():
+            tb = tb.unsqueeze(-1)
+        tb = tb.expand(*q.shape[:-1], 1)
+        v_in = torch.cat([q, tb], dim=-1)
+        if context is not None:
+            v_in = torch.cat([v_in, context], dim=-1)
+        return v_in
+
+    def energy(self, q: torch.Tensor, p: torch.Tensor, t: torch.Tensor,
+               context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        return self.T(p).squeeze(-1) + self.V(self._v_input(q, t, context)).squeeze(-1)
+
+    def dT_dp(self, p: torch.Tensor) -> torch.Tensor:
+        if not p.requires_grad:
+            p = p.requires_grad_(True)
+        (g,) = torch.autograd.grad(self.T(p).sum(), p, create_graph=self.training)
+        return g
+
+    def dV_dq(self, q: torch.Tensor, t: torch.Tensor,
+              context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        if not q.requires_grad:
+            q = q.requires_grad_(True)
+        v_in = self._v_input(q, t, context)
+        (g,) = torch.autograd.grad(self.V(v_in).sum(), q, create_graph=self.training)
+        return g
+
+    def step(self, q: torch.Tensor, p: torch.Tensor, t: torch.Tensor, dt: float,
+             context: Optional[torch.Tensor] = None
+             ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        dt = float(dt)
+        p_half = p - 0.5 * dt * self.dV_dq(q, t, context)
+        q_next = q + dt * self.dT_dp(p_half)
+        t_next = t + dt
+        p_next = p_half - 0.5 * dt * self.dV_dq(q_next, t_next, context)
+        return q_next, p_next, t_next
+
+    def rollout(self, q0: torch.Tensor, p0: torch.Tensor, t0: torch.Tensor,
+                steps: int, dt: float,
+                context: Optional[torch.Tensor] = None
+                ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        qs, ps, ts = [q0], [p0], [t0]
+        q, p, t = q0, p0, t0
+        for _ in range(int(steps)):
+            q, p, t = self.step(q, p, t, dt, context)
+            qs.append(q)
+            ps.append(p)
+            ts.append(t)
+        return torch.stack(qs), torch.stack(ps), torch.stack(ts)
+
+
 class NonseparableHamiltonianHead(nn.Module):
     """H(q,p|ctx) = T(p) + V(q|ctx) + C(q,p|ctx) — a NON-separable Hamiltonian
     (P2-2) with a velocity-dependent coupling C (magnetic / Coriolis terms),

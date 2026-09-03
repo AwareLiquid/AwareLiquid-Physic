@@ -179,6 +179,65 @@ class LiquidNBodyModel(nn.Module):
         return qs, vs, context
 
 
+class ProbabilisticLiquidModel(nn.Module):
+    """VAE-style probabilistic context (P2-3): the liquid core infers a
+    DISTRIBUTION over the hidden system parameters (mu, logvar) instead of a
+    point estimate. Sampling the context gives an ENSEMBLE of symplectic
+    rollouts — probabilistic prediction with quantified uncertainty, the
+    minimal ensemble counterpart of diffusion-style forecasts (GenCast line).
+
+    Training: reparameterised single sample (n_samples=1). Inference: n_samples
+    draws, mean + std of the ensemble is the prediction + uncertainty.
+    """
+
+    def __init__(self, phase_dim: int, d_model: int = 64, context_dim: int = 16,
+                 n_scales: int = 4, hidden_dim: int = 64, depth: int = 2,
+                 dt: float = 0.1, core_dt: float = 1.0):
+        super().__init__()
+        self.phase_dim = int(phase_dim)
+        self.context_dim = int(context_dim)
+        self.dt = float(dt)
+
+        self.core = LiquidCore(2 * phase_dim, d_model, n_scales=n_scales,
+                               dt=core_dt)
+        self.mu_proj = nn.Linear(d_model, context_dim)
+        self.logvar_proj = nn.Linear(d_model, context_dim)
+        self.ham = HamiltonianHead(phase_dim, hidden_dim=hidden_dim,
+                                   depth=depth, context_dim=context_dim)
+
+    def infer_dist(self, q_obs: torch.Tensor,
+                   p_obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = torch.cat([q_obs, p_obs], dim=-1)
+        h = self.core.encode(x)
+        return self.mu_proj(h), self.logvar_proj(h)
+
+    def sample_context(self, mu: torch.Tensor, logvar: torch.Tensor,
+                       n_samples: int) -> torch.Tensor:
+        std = (0.5 * logvar).exp()
+        eps = torch.randn(n_samples, *mu.shape, device=mu.device)
+        return mu + eps * std                       # (S, B, d_ctx)
+
+    def rollout_ensemble(self, q0: torch.Tensor, p0: torch.Tensor,
+                         mu: torch.Tensor, logvar: torch.Tensor,
+                         n_samples: int, steps: int
+                         ) -> Tuple[torch.Tensor, torch.Tensor]:
+        ctxs = self.sample_context(mu, logvar, n_samples)
+        all_qs, all_ps = [], []
+        for s in range(n_samples):
+            qs, ps = self.ham.rollout(q0, p0, steps, self.dt, context=ctxs[s])
+            all_qs.append(qs)
+            all_ps.append(ps)
+        return torch.stack(all_qs), torch.stack(all_ps)   # (S, k+1, B, dim)
+
+    def forward(self, q_obs: torch.Tensor, p_obs: torch.Tensor, k: int,
+                n_samples: int = 1
+                ) -> Tuple[torch.Tensor, torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        mu, logvar = self.infer_dist(q_obs, p_obs)
+        q0, p0 = q_obs[:, -1], p_obs[:, -1]
+        qs, ps = self.rollout_ensemble(q0, p0, mu, logvar, n_samples, k)
+        return qs, ps, (mu, logvar)
+
+
 class GRUSeqModel(nn.Module):
     """Unstructured autoregressive baseline: a GRU encodes the (q,p) prefix, then
     an MLP head predicts the next-state DELTA autoregressively (plain Euler-style

@@ -16,10 +16,12 @@ from .datasets import (gen_nbody, gen_wave_1d, gen_wave_1d_inhomogeneous,
 from .hamiltonian import (FiLMHamiltonianHead, HamiltonianHead,
                           MLPFieldHead, NonseparableHamiltonianHead,
                           OperatorHamiltonianHead,
-                          OperatorHamiltonianHead2d)
+                          OperatorHamiltonianHead2d,
+                          TimeConditionedHamiltonianHead)
 from .liquid_core import LiquidCore
 from .model import (GRUSeqModel, LiquidHamiltonianModel,
-                    LiquidNBodyModel, LiquidOperatorHamiltonianModel)
+                    LiquidNBodyModel, LiquidOperatorHamiltonianModel,
+                    ProbabilisticLiquidModel)
 from .operator_potential import (FiLM, FNOBlock, FNOBlock2d,
                                  OperatorPotential, OperatorPotential2d,
                                  SpectralConv1d, SpectralConv2d)
@@ -34,11 +36,13 @@ __all__ = [
     "OperatorHamiltonianHead",
     "OperatorHamiltonianHead2d",
     "NonseparableHamiltonianHead",
+    "TimeConditionedHamiltonianHead",
     "NBodyHamiltonianHead",
     "LiquidCore",
     "LiquidHamiltonianModel",
     "LiquidOperatorHamiltonianModel",
     "LiquidNBodyModel",
+    "ProbabilisticLiquidModel",
     "GRUSeqModel",
     "OperatorPotential",
     "OperatorPotential2d",
