@@ -1,4 +1,4 @@
-"""Liquid-core + physics coupling evaluation — does the LIQUID substrate add value
+"""Liquid-core + physics coupling evaluation 鈥?does the LIQUID substrate add value
 ON TOP of the Hamiltonian structure, on a FAMILY of systems with a hidden parameter?
 
 This is the experiment the whole repo exists for: physics ON the liquid core, not a
@@ -8,13 +8,13 @@ prefix and must predict the future.
 
 Three models, same objective (prefix -> free-running k_train-step rollout MSE), same
 optimizer/lr/steps:
-  * liquid_ham : LiquidHamiltonianModel — the liquid core reads the prefix to INFER
+  * liquid_ham : LiquidHamiltonianModel 鈥?the liquid core reads the prefix to INFER
                  omega (system identification) and conditions the Hamiltonian
                  potential; symplectic rollout predicts the future.
-  * static_ham : a single autonomous HamiltonianHead (no context) — same physics
+  * static_ham : a single autonomous HamiltonianHead (no context) 鈥?same physics
                  structure but ONE fixed potential for the whole family, so it cannot
                  adapt to a trajectory's omega. Isolates what the liquid core buys.
-  * gru_seq    : a GRU encoder + autoregressive MLP head — unstructured control.
+  * gru_seq    : a GRU encoder + autoregressive MLP head 鈥?unstructured control.
                  Isolates what the physics structure buys.
 
 Metrics on held-out trajectories (unseen omegas from the same range): k-step rollout
@@ -23,7 +23,7 @@ MSE and relative ENERGY DRIFT (energy computed with each trajectory's TRUE omega
 Hypothesis (falsifiable): liquid_ham should beat static_ham (it can adapt to omega)
 AND beat gru_seq on long-horizon energy drift (it conserves energy by construction).
 If liquid_ham does not beat static_ham, the liquid core adds nothing here and the
-coupling is not worth it — reported honestly either way. CPU-runnable.
+coupling is not worth it 鈥?reported honestly either way. CPU-runnable.
 
 Usage:
     python benchmarks/liquid_physics_eval.py --train_steps 500
@@ -182,7 +182,7 @@ def main():
     ap.add_argument("--out_dir", default="benchmarks/physics_out")
     args = ap.parse_args()
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     qs, ps, omega = gen_spring_family(args.n_train + args.n_eval, args.gen_steps,
                                       args.dt, args.dim, args.omega_lo, args.omega_hi,
                                       g, device=args.device)
@@ -237,7 +237,7 @@ def main():
     print(f"  liquid beats gru on energy drift (structure helps): {beats_gru_energy}", flush=True)
     verdict = ("LIQUID+PHYSICS WINS" if beats_static and beats_gru_energy
                else "PARTIAL / see numbers" if beats_static or beats_gru_energy
-               else "COUPLING ADDS NOTHING — shelve")
+               else "COUPLING ADDS NOTHING 鈥?shelve")
     print(f"  verdict: {verdict}", flush=True)
 
 

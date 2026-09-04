@@ -1,13 +1,13 @@
 """
-benchmarks/field_eval.py — v0.2 (M2): the OPERATOR potential on a 1D field.
+benchmarks/field_eval.py 鈥?v0.2 (M2): the OPERATOR potential on a 1D field.
 
 The coupling experiment for fields: a family of periodic strings (hidden wave
 speed c per trajectory), prefix -> symplectic rollout, with a SPECTRAL (FNO)
 potential conditioned by the liquid context.
 
 Models:
-  liquid_operator  — liquid core system-ID -> FiLM conditions the FNO potential
-  static_operator  — same FNO Hamiltonian, context = 0 (no system identification)
+  liquid_operator  鈥?liquid core system-ID -> FiLM conditions the FNO potential
+  static_operator  鈥?same FNO Hamiltonian, context = 0 (no system identification)
 
 Physics metrics only (rollout MSE, energy drift), plus the resolution test:
 train at N=32, evaluate zero-shot at N=64/128 (resolution invariance).
@@ -31,7 +31,7 @@ from awareliquid_physics.train import train_semigroup
 
 
 class StaticOperatorWrapper(torch.nn.Module):
-    """Operator Hamiltonian with a FIXED zero context — the 'no system-ID'
+    """Operator Hamiltonian with a FIXED zero context 鈥?the 'no system-ID'
     control, matched to the train/rollout interface."""
 
     def __init__(self, ham: OperatorHamiltonianHead, dt: float):
@@ -146,11 +146,11 @@ def main():
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
     args = ap.parse_args()
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     n = args.n_train + args.n_eval
     if args.inhomogeneous:
         # Hard version: the hidden parameter is a whole spatial FIELD c(x) per
-        # trajectory — a static potential can only approximate an average medium.
+        # trajectory 鈥?a static potential can only approximate an average medium.
         qs, ps, cfields = gen_wave_1d_inhomogeneous(
             n, args.gen_steps, args.dt, args.n_nodes,
             c_mean=args.c_eval, c_var=args.c_var, generator=g,
@@ -159,10 +159,10 @@ def main():
               f"c(x) = {args.c_eval} +/- {args.c_var} per trajectory", flush=True)
     else:
         # Family of constant wave speeds: half at c_eval, rest spread over
-        # [c_lo, c_hi] — per-trajectory hidden scalar the context must identify.
+        # [c_lo, c_hi] 鈥?per-trajectory hidden scalar the context must identify.
         qs, ps = gen_wave_1d(n, args.gen_steps, args.dt, args.n_nodes,
                              c=args.c_eval, generator=g, device=args.device)
-        g2 = torch.Generator().manual_seed(args.seed + 1)
+        g2 = torch.Generator(device=args.device).manual_seed(args.seed + 1)
         cs = torch.empty(n, device=args.device)
         cs[:n // 2] = args.c_eval
         cs[n // 2:] = args.c_lo + (args.c_hi - args.c_lo) * torch.rand(
@@ -210,7 +210,7 @@ def main():
               f"energy_drift(max) {drift_mean:.4e} +/- {drift_std:.2e}", flush=True)
 
     # Resolution invariance: the SAME trained model at 2x the node count.
-    g3 = torch.Generator().manual_seed(args.seed + 2)
+    g3 = torch.Generator(device=args.device).manual_seed(args.seed + 2)
     mse_hi = resolution_test(liquid_trained, args, g3)
     results["resolution"] = {"train_N": args.n_nodes, "test_N": args.n_res_test,
                              "rollout_mse": mse_hi}

@@ -1,5 +1,5 @@
 """
-benchmarks/nbody_eval.py — v0.2 (P2-1): the pair-potential Hamiltonian on
+benchmarks/nbody_eval.py 鈥?v0.2 (P2-1): the pair-potential Hamiltonian on
 gravitational N-body systems (irregular nodes).
 
 The coupling experiment for particles: a family of N-body systems with a
@@ -7,11 +7,11 @@ hidden per-trajectory MASS field, prefix -> symplectic rollout, with a RADIAL
 pair potential conditioned by the liquid context.
 
 Models:
-  liquid_nbody — liquid core system-ID -> context conditions the pair potential
-  static_nbody — same pair-potential Hamiltonian, context = 0 (no system-ID)
+  liquid_nbody 鈥?liquid core system-ID -> context conditions the pair potential
+  static_nbody 鈥?same pair-potential Hamiltonian, context = 0 (no system-ID)
 
 Physics metrics only: rollout MSE and energy drift (true mass field). This is
-the irregular-node counterpart of field_eval.py — the pair potential replaces
+the irregular-node counterpart of field_eval.py 鈥?the pair potential replaces
 the FNO spectral layer (which assumes a periodic grid).
 
 Usage:
@@ -34,7 +34,7 @@ from awareliquid_physics.train import train_semigroup
 
 
 class StaticNBodyWrapper(torch.nn.Module):
-    """Pair-potential Hamiltonian with a FIXED zero context — the no-system-ID
+    """Pair-potential Hamiltonian with a FIXED zero context 鈥?the no-system-ID
     control for the N-body coupling experiment."""
 
     def __init__(self, ham: NBodyHamiltonianHead, dt: float):
@@ -120,7 +120,7 @@ def main():
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
     args = ap.parse_args()
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     n = args.n_train + args.n_eval
     qs, vs, mass = gen_nbody(n, args.gen_steps, args.dt, args.n_particles,
                              args.dim, mass_lo=args.mass_lo, mass_hi=args.mass_hi,

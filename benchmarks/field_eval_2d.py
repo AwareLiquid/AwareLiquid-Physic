@@ -1,5 +1,5 @@
 """
-benchmarks/field_eval_2d.py — v0.2 (P2): the 2D spectral-operator potential
+benchmarks/field_eval_2d.py 鈥?v0.2 (P2): the 2D spectral-operator potential
 on a periodic membrane (2D wave equation).
 
 The 2D counterpart of field_eval.py: a family of 2D membranes, prefix ->
@@ -7,8 +7,8 @@ symplectic rollout, with the SpectralConv2d potential conditioned by the
 liquid context.
 
 Models:
-  liquid_operator2d — liquid system-ID -> FiLM conditions the 2D FNO potential
-  static_operator2d — same 2D Hamiltonian, context = 0 (no system-ID)
+  liquid_operator2d 鈥?liquid system-ID -> FiLM conditions the 2D FNO potential
+  static_operator2d 鈥?same 2D Hamiltonian, context = 0 (no system-ID)
 
 Physics metrics (rollout MSE, energy drift) + a resolution test (H=16 -> 32).
 
@@ -117,7 +117,7 @@ def main():
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
     args = ap.parse_args()
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     n = args.n_train + args.n_eval
     qs, ps = gen_wave_2d(n, args.gen_steps, args.dt, args.n_nodes, args.n_nodes,
                          args.c_eval, g, device=args.device)
@@ -167,7 +167,7 @@ def main():
               f"rollout_mse {mse_mean:.4e} +/- {mse_std:.2e} | "
               f"energy_drift(max) {drift_mean:.4e}", flush=True)
 
-    g3 = torch.Generator().manual_seed(args.seed + 2)
+    g3 = torch.Generator(device=args.device).manual_seed(args.seed + 2)
     mse_hi = resolution_test(liquid_trained, args, g3)
     results["resolution"] = {"train_N": args.n_nodes, "test_N": args.n_res_test,
                              "rollout_mse": mse_hi}

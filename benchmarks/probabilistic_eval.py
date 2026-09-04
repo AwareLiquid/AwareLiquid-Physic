@@ -1,11 +1,11 @@
 """
-benchmarks/probabilistic_eval.py — v0.2 (P2-3): probabilistic prediction via
+benchmarks/probabilistic_eval.py 鈥?v0.2 (P2-3): probabilistic prediction via
 the VAE-context model on a family of oscillators (hidden stiffness).
 
 ProbabilisticLiquidModel infers a DISTRIBUTION (mu, logvar) over the hidden
 stiffness; sampling gives an ensemble of symplectic rollouts. Metrics:
   * ensemble-mean rollout MSE (the point prediction);
-  * ensemble SPREAD (uncertainty magnitude) — should be large where the
+  * ensemble SPREAD (uncertainty magnitude) 鈥?should be large where the
     model is uncertain (e.g. near the true stiffness range boundary).
 
 Usage: python benchmarks/probabilistic_eval.py --train_steps 300
@@ -59,7 +59,7 @@ def main():
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
     args = ap.parse_args()
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     qs, ps, omega = gen_spring(args.n_train + args.n_eval, args.gen_steps,
                                args.dt, args.omega_lo, args.omega_hi, g,
                                device=args.device)
@@ -71,10 +71,11 @@ def main():
                                      hidden_dim=args.hidden, dt=args.dt).to(args.device)
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     model.train()
+    g_train = torch.Generator().manual_seed(args.seed + 1000)   # CPU, index sampling
     for _ in range(args.train_steps):
-        bi = torch.randint(0, args.n_train, (args.batch,), generator=g)
+        bi = torch.randint(0, args.n_train, (args.batch,), generator=g_train)
         t0 = torch.randint(0, args.gen_steps - args.t_obs - args.k_train,
-                           (1,), generator=g).item()
+                           (1,), generator=g_train).item()
         q_obs = qs[bi, t0:t0 + args.t_obs]
         p_obs = ps[bi, t0:t0 + args.t_obs]
         fut = slice(t0 + args.t_obs - 1, t0 + args.t_obs + args.k_train)

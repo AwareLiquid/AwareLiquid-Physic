@@ -3,6 +3,7 @@ __pycache__/
 .pytest_cache/
 benchmarks/physics_out/
 benchmarks/physics_out_v02/
+training_logs/
 *.egg-info/
 dist/
 build/

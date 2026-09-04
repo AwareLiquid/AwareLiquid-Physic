@@ -1,5 +1,5 @@
 """
-benchmarks/pretrain_finetune_eval.py — v0.2 (M3): pretrain/finetune protocol
+benchmarks/pretrain_finetune_eval.py 鈥?v0.2 (M3): pretrain/finetune protocol
 (Poseidon-style sample efficiency) on the wave-field family.
 
 Question: does pretraining on a MIX of wave speeds let the model adapt to a
@@ -91,14 +91,14 @@ def main():
     families = []
     for i, c in enumerate((0.8, 1.0, 1.2)):
         qs, ps = gen_wave_1d(args.n_pretrain_per_speed, args.gen_steps, args.dt,
-                             args.n_nodes, c, torch.Generator().manual_seed(args.seed + i),
+                             args.n_nodes, c, torch.Generator(device=args.device).manual_seed(args.seed + i),
                              device=args.device)
         families.append((qs, ps))
 
     # Few-shot + eval sets at the UNSEEN speed.
     qs_t, ps_t = gen_wave_1d(args.n_shot + args.n_few_eval, args.gen_steps,
                              args.dt, args.n_nodes, args.c_target,
-                             torch.Generator().manual_seed(args.seed + 100),
+                             torch.Generator(device=args.device).manual_seed(args.seed + 100),
                              device=args.device)
     qs_few, ps_few = qs_t[:args.n_shot], ps_t[:args.n_shot]
     qs_ev, ps_ev = qs_t[args.n_shot:], ps_t[args.n_shot:]

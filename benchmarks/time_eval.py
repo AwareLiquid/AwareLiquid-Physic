@@ -1,11 +1,11 @@
 """
-benchmarks/time_eval.py — v0.2 (P2-4): time-conditioned Hamiltonian for a
+benchmarks/time_eval.py 鈥?v0.2 (P2-4): time-conditioned Hamiltonian for a
 DRIVEN oscillator (time-dependent force).
 
 TimeConditionedHamiltonianHead takes time as an explicit input to the
 potential V(q, t), so the SAME model is evaluated at any time (continuous-time
 evaluation). Ground truth is the RK4 driven-oscillator trajectory (gen_driven);
-energy is NOT conserved there (the drive does work) — the head must model the
+energy is NOT conserved there (the drive does work) 鈥?the head must model the
 time dependence, not fight it.
 
 Metric: k-step rollout MSE against the driven truth.
@@ -46,7 +46,7 @@ def main():
     ap.add_argument("--out_dir", default="benchmarks/physics_out_v02")
     args = ap.parse_args()
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     qs, ps = gen_driven(args.n_train + args.n_eval, args.gen_steps, args.dt,
                         args.omega0, args.drive_amp, args.drive_freq, g,
                         device=args.device)
@@ -61,9 +61,10 @@ def main():
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda t: args.lr_decay ** t)
     head.train()
     N, S = qs.shape[0], qs.shape[1]
+    g_train = torch.Generator().manual_seed(args.seed + 1000)   # CPU, index sampling
     for _ in range(args.train_steps):
-        bi = torch.randint(0, N, (args.batch,), generator=g)
-        t0 = torch.randint(0, S - 2, (1,), generator=g).item()
+        bi = torch.randint(0, N, (args.batch,), generator=g_train)
+        t0 = torch.randint(0, S - 2, (1,), generator=g_train).item()
         q, p = qs[bi, t0], ps[bi, t0]
         t = torch.full((args.batch,), t0 * args.dt, device=args.device)
         q_true, p_true = qs[bi, t0 + 1], ps[bi, t0 + 1]

@@ -1,10 +1,10 @@
 """
-benchmarks/nonseparable_eval.py — v0.2 (P2-2): learn a NON-separable
+benchmarks/nonseparable_eval.py 鈥?v0.2 (P2-2): learn a NON-separable
 Hamiltonian for charged particles in a uniform magnetic field.
 
 The head NonseparableHamiltonianHead integrates H = T(p) + V(q) + C(q,p) by
 IMPLICIT MIDPOINT (velocity-Verlet does not apply). Ground truth is the RK4
-magnetic trajectory (gen_magnetic) — energy is conserved there (magnetic
+magnetic trajectory (gen_magnetic) 鈥?energy is conserved there (magnetic
 forces do no work), and the learned head must recover that.
 
 Metrics: k-step rollout MSE and energy drift (the true H is analytic).
@@ -73,7 +73,7 @@ def main():
     global args_dt
     args_dt = args.dt
 
-    g = torch.Generator().manual_seed(args.seed)
+    g = torch.Generator(device=args.device).manual_seed(args.seed)
     qs, ps = gen_magnetic(args.n_train + args.n_eval, args.gen_steps, args.dt,
                           args.B, g, device=args.device)
     tr, ev = slice(0, args.n_train), slice(args.n_train, None)
