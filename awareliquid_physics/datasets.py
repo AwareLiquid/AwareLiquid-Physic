@@ -305,6 +305,61 @@ def gen_wave_2d(n_traj: int, steps: int, dt: float, H: int, W: int, c: float,
             torch.cat(ps, dim=1).permute(1, 0, 2, 3, 4))
 
 
+def gen_wave_2d_inhomogeneous(n_traj: int, steps: int, dt: float, H: int,
+                               W: int, c_mean: float, c_var: float,
+                               generator: torch.Generator, n_modes: int = 3,
+                               device: str = "cpu"
+                               ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """2D INHOMOGENEOUS membranes: the wave speed is a smooth random FIELD
+    c(x,y) per trajectory (the 2D counterpart of gen_wave_1d_inhomogeneous).
+
+    Hamiltonian: H = sum [ p^2/2 + c^2/2 ((q_{x+1,y}-q)^2 + (q_{x,y+1}-q)^2) ]
+    (cyclic), so the acceleration is the variable-coefficient 2D Laplacian
+        a = c^2 (q_{x+1}+q_{x-1}+q_{x,y+1}+q_{x,y-1}-4q)
+          + d(c^2) . grad(q) differences.
+
+    The hidden parameter is the whole SPATIAL FIELD c(x,y), which a static
+    potential can only approximate by an average medium - per-trajectory
+    adaptation (liquid system-ID) is what buys accuracy. Ground truth by
+    velocity-Verlet. Returns (qs, ps, cs): qs/ps (n_traj, steps+1, H, W, 1),
+    cs (n_traj, H, W). On `device`.
+    """
+    qs, ps, cfields = [], [], []
+    for _ in range(n_traj):
+        c = c_mean + c_var * _smooth_field_2d(1, H, W, generator, n_modes,
+                                              device)
+        c = c.clamp_min(0.2 * c_mean)                          # (1, H, W)
+        q0 = _smooth_field_2d(1, H, W, generator, 3, device)   # (1, H, W)
+        p0 = torch.randn(1, H, W, generator=generator, device=device) * 0.3
+
+        q = q0.unsqueeze(-1)               # (1, H, W, 1)
+        p = p0.unsqueeze(-1)
+        c2 = (c * c).unsqueeze(-1)         # (1, H, W, 1)
+
+        def accel(pos):
+            dq_r = torch.roll(pos, -1, dims=1) - pos    # q_{x+1} - q_x
+            dq_l = pos - torch.roll(pos, 1, dims=1)     # q_x - q_{x-1}
+            dq_d = torch.roll(pos, -1, dims=2) - pos    # q_{y+1} - q_y
+            dq_u = pos - torch.roll(pos, 1, dims=2)     # q_y - q_{y-1}
+            c2l = torch.roll(c2, 1, dims=1)
+            c2u = torch.roll(c2, 1, dims=2)
+            return (c2 * dq_r - c2l * dq_l
+                    + c2 * dq_d - c2u * dq_u)
+
+        q_list, p_list = [q], [p]
+        a = accel(q)
+        for _ in range(steps):
+            q, p, a = integrate_verlet(q, p, accel, dt, accel=a)
+            q_list.append(q)
+            p_list.append(p)
+        qs.append(torch.stack(q_list))
+        ps.append(torch.stack(p_list))
+        cfields.append(c)
+    return (torch.cat(qs, dim=1).permute(1, 0, 2, 3, 4),
+            torch.cat(ps, dim=1).permute(1, 0, 2, 3, 4),
+            torch.cat(cfields, dim=0))
+
+
 def _smooth_field_2d(n_traj: int, H: int, W: int, generator: torch.Generator,
                      n_modes: int, device: str = "cpu") -> torch.Tensor:
     """Random smooth 2D field: low Fourier modes on a H x W torus. Returns
@@ -317,6 +372,7 @@ def _smooth_field_2d(n_traj: int, H: int, W: int, generator: torch.Generator,
             amp = torch.rand(n_traj, generator=generator, device=device) / (mx * my)
             phase = torch.rand(n_traj, generator=generator, device=device) * 2.0 * math.pi
             wave = torch.sin(2.0 * math.pi * mx * xs[:, None] / H
-                             + 2.0 * math.pi * my * ys[None, :] / W)
-            field += amp[:, None, None] * (wave[None] + phase[:, None, None])
+                             + 2.0 * math.pi * my * ys[None, :] / W
+                             + phase[:, None, None])
+            field += amp[:, None, None] * wave
     return field

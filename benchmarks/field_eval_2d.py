@@ -25,7 +25,8 @@ import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from awareliquid_physics.datasets import gen_wave_2d
+from awareliquid_physics.datasets import (gen_wave_2d,
+                                          gen_wave_2d_inhomogeneous)
 from awareliquid_physics.hamiltonian import OperatorHamiltonianHead2d
 from awareliquid_physics.model import LiquidOperatorHamiltonianModel2d
 from awareliquid_physics.train import train_semigroup
@@ -55,10 +56,14 @@ class StaticOperatorWrapper2d(torch.nn.Module):
 def _membrane_energy(q, p, c):
     dqx = q - torch.roll(q, 1, dims=-3)
     dqy = q - torch.roll(q, 1, dims=-2)
-    return 0.5 * (p ** 2).sum((-1, -2, -3)) + 0.5 * c * c * (dqx ** 2 + dqy ** 2).sum((-1, -2, -3))
+    c2 = c * c
+    if torch.is_tensor(c):
+        c2 = c2.unsqueeze(0).unsqueeze(-1)   # (1, B, H, W, 1) broadcast
+    return (0.5 * (p ** 2).sum((-1, -2, -3))
+            + (0.5 * c2 * (dqx ** 2 + dqy ** 2)).sum((-1, -2, -3)))
 
 
-def evaluate(model, qs, ps, t_obs, eval_k, dt, c):
+def evaluate(model, qs, ps, c_field, t_obs, eval_k, dt):
     model.eval()
     q_obs, p_obs = qs[:, :t_obs], ps[:, :t_obs]
     with torch.enable_grad():
@@ -67,7 +72,7 @@ def evaluate(model, qs, ps, t_obs, eval_k, dt, c):
     q_true = qs[:, t_obs - 1: t_obs + eval_k].permute(1, 0, 2, 3, 4)
     p_true = ps[:, t_obs - 1: t_obs + eval_k].permute(1, 0, 2, 3, 4)
     mse = ((qs_pred - q_true).pow(2).mean() + (ps_pred - p_true).pow(2).mean()).item()
-    E = _membrane_energy(qs_pred, ps_pred, c)         # (k+1, B)
+    E = _membrane_energy(qs_pred, ps_pred, c_field)   # (k+1, B)
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).max().item()
     return mse, drift
@@ -96,6 +101,10 @@ def main():
     ap.add_argument("--eval_k", type=int, default=30)
     ap.add_argument("--dt", type=float, default=0.02)
     ap.add_argument("--c_eval", type=float, default=1.0)
+    ap.add_argument("--c_var", type=float, default=0.5,
+                    help="inhomogeneous mode: amplitude of the random c(x,y) field")
+    ap.add_argument("--inhomogeneous", action="store_true",
+                    help="wave speed is a random smooth FIELD c(x,y) per trajectory")
     ap.add_argument("--n_nodes", type=int, default=16)   # H = W = n_nodes
     ap.add_argument("--n_res_test", type=int, default=32)
     ap.add_argument("--n_res_eval", type=int, default=8)
@@ -119,11 +128,20 @@ def main():
 
     g = torch.Generator(device=args.device).manual_seed(args.seed)
     n = args.n_train + args.n_eval
-    qs, ps = gen_wave_2d(n, args.gen_steps, args.dt, args.n_nodes, args.n_nodes,
-                         args.c_eval, g, device=args.device)
+    if args.inhomogeneous:
+        qs, ps, cfields = gen_wave_2d_inhomogeneous(
+            n, args.gen_steps, args.dt, args.n_nodes, args.n_nodes,
+            c_mean=args.c_eval, c_var=args.c_var, generator=g, device=args.device)
+        print(f"2D membrane family (INHOMOGENEOUS): {args.n_nodes}x{args.n_nodes} "
+              f"c(x,y) = {args.c_eval} +/- {args.c_var} per trajectory", flush=True)
+    else:
+        qs, ps = gen_wave_2d(n, args.gen_steps, args.dt, args.n_nodes, args.n_nodes,
+                             args.c_eval, g, device=args.device)
+        cfields = torch.full((n, args.n_nodes, args.n_nodes), args.c_eval,
+                             device=args.device)
+        print(f"2D membrane family: {args.n_nodes}x{args.n_nodes} c={args.c_eval} "
+              f"t_obs={args.t_obs} k_train={args.k_train} eval_k={args.eval_k}", flush=True)
     tr, ev = slice(0, args.n_train), slice(args.n_train, None)
-    print(f"2D membrane family: {args.n_nodes}x{args.n_nodes} c={args.c_eval} "
-          f"t_obs={args.t_obs} k_train={args.k_train} eval_k={args.eval_k}", flush=True)
 
     def build(name, seed):
         torch.manual_seed(seed)
@@ -154,8 +172,8 @@ def main():
             train_semigroup(model, qs[tr], ps[tr], args.t_obs, args.k_train,
                             args.train_steps, args.lr, args.batch, seed,
                             lr_decay=args.lr_decay)
-            mse, drift = evaluate(model, qs[ev], ps[ev], args.t_obs, args.eval_k,
-                                  args.dt, args.c_eval)
+            mse, drift = evaluate(model, qs[ev], ps[ev], cfields[ev], args.t_obs,
+                                  args.eval_k, args.dt)
             mses.append(mse)
             drifts.append(drift)
         mse_mean = sum(mses) / len(mses)
