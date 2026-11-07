@@ -43,6 +43,7 @@ import torch
 from awareliquid_physics.hamiltonian import FiLMHamiltonianHead, HamiltonianHead
 from awareliquid_physics.liquid_core import LiquidCore
 from awareliquid_physics.model import GRUSeqModel, LiquidHamiltonianModel
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 class LiquidFilmWrapper(torch.nn.Module):
@@ -152,6 +153,8 @@ def evaluate(model, qs, ps, omega, t_obs, eval_k, dt):
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).mean(-1)                      # (k+1,)
     return {"rollout_mse": mse,
+            "rollout_mse_stderr": rollout_mse_stderr(qs_pred, q_true.permute(1, 0, 2),
+                                                     ps_pred, p_true.permute(1, 0, 2)),
             "energy_drift_final": drift[-1].item(),
             "energy_drift_max": drift.max().item()}
 
@@ -221,7 +224,8 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "liquid_physics.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "liquid_physics_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
 
     lh, sh, gr = results["liquid_ham"], results["static_ham"], results["gru_seq"]
     print("\n" + "=" * 70, flush=True)

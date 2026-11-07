@@ -21,6 +21,7 @@ import torch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from awareliquid_physics.model import ProbabilisticLiquidModel
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 def gen_spring(n_traj, steps, dt, omega_lo, omega_hi, g, device="cpu"):
@@ -100,11 +101,14 @@ def main():
     logvar_mean = logvar.mean().item()
 
     results = {"params": sum(p.numel() for p in model.parameters()),
-               "ensemble_mean_mse": mse_mean, "ensemble_spread": spread,
+               "ensemble_mean_mse": mse_mean,
+               "ensemble_mean_mse_stderr": rollout_mse_stderr(q_mean, q_true),
+               "ensemble_spread": spread,
                "context_logvar_mean": logvar_mean}
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "probabilistic_eval.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "probabilistic_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
     print(f"  params {results['params']:>6,} | ensemble_mean_mse {mse_mean:.4e} "
           f"| ensemble_spread {spread:.4e} | context_logvar {logvar_mean:.3f}",
           flush=True)

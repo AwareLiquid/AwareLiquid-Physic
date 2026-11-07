@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from awareliquid_physics.hamiltonian import HamiltonianHead
 from awareliquid_physics.model import LiquidHamiltonianModel
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 from awareliquid_physics.train import train_semigroup
 
 
@@ -112,13 +113,16 @@ def main():
         q_true = qs[ev, args.t_obs - 1: args.t_obs + args.eval_k].permute(1, 0, 2)
         p_true = ps[ev, args.t_obs - 1: args.t_obs + args.eval_k].permute(1, 0, 2)
         mse = ((qs_pred - q_true).pow(2).mean() + (ps_pred - p_true).pow(2).mean()).item()
-        results[name] = {"params": n_par, "train_loss": floss, "rollout_mse": mse}
+        results[name] = {"params": n_par, "train_loss": floss, "rollout_mse": mse,
+                         "rollout_mse_stderr": rollout_mse_stderr(qs_pred, q_true,
+                                                                  ps_pred, p_true)}
         print(f"  [{name:10s}] params {n_par:>6,} | train_loss {floss:.4e} | "
               f"rollout_mse {mse:.4e}", flush=True)
 
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "m1_semigroup.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "m1_semigroup_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
 
     lq, st = results["liquid_sg"], results["static_sg"]
     gap = 1.0 - lq["rollout_mse"] / st["rollout_mse"]

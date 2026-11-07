@@ -30,6 +30,7 @@ from awareliquid_physics.datasets import (gen_wave_2d,
 from awareliquid_physics.hamiltonian import OperatorHamiltonianHead2d
 from awareliquid_physics.model import LiquidOperatorHamiltonianModel2d
 from awareliquid_physics.train import train_semigroup
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 class StaticOperatorWrapper2d(torch.nn.Module):
@@ -75,7 +76,7 @@ def evaluate(model, qs, ps, c_field, t_obs, eval_k, dt):
     E = _membrane_energy(qs_pred, ps_pred, c_field)   # (k+1, B)
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).max().item()
-    return mse, drift
+    return mse, drift, rollout_mse_stderr(qs_pred, q_true, ps_pred, p_true)
 
 
 def resolution_test(model, args, g):
@@ -160,7 +161,7 @@ def main():
     results = {}
     liquid_trained = None
     for name in ("liquid_operator2d", "static_operator2d"):
-        mses, drifts = [], []
+        mses, drifts, mse_ses = [], [], []
         n_par = None
         for s in range(args.n_seeds):
             seed = args.seed + s
@@ -172,15 +173,18 @@ def main():
             train_semigroup(model, qs[tr], ps[tr], args.t_obs, args.k_train,
                             args.train_steps, args.lr, args.batch, seed,
                             lr_decay=args.lr_decay)
-            mse, drift = evaluate(model, qs[ev], ps[ev], cfields[ev], args.t_obs,
-                                  args.eval_k, args.dt)
+            mse, drift, mse_se = evaluate(model, qs[ev], ps[ev], cfields[ev], args.t_obs,
+                                          args.eval_k, args.dt)
             mses.append(mse)
             drifts.append(drift)
+            mse_ses.append(mse_se)
         mse_mean = sum(mses) / len(mses)
         drift_mean = sum(drifts) / len(drifts)
         mse_std = (sum((m - mse_mean) ** 2 for m in mses) / len(mses)) ** 0.5
         results[name] = {"params": n_par, "rollout_mse": mse_mean,
-                         "rollout_mse_std": mse_std, "energy_drift_max": drift_mean}
+                         "rollout_mse_std": mse_std,
+                         "rollout_mse_stderr": sum(mse_ses) / len(mse_ses),
+                         "energy_drift_max": drift_mean}
         print(f"  [{name:17s}] params {n_par:>6,} | n_seeds {args.n_seeds} | "
               f"rollout_mse {mse_mean:.4e} +/- {mse_std:.2e} | "
               f"energy_drift(max) {drift_mean:.4e}", flush=True)
@@ -194,7 +198,8 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "field_eval_2d.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "field_eval_2d",
+                   "device": args.device}), "results": results}, f, indent=2)
 
     lq, st = results["liquid_operator2d"], results["static_operator2d"]
     print("\n" + "=" * 70, flush=True)

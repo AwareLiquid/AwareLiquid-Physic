@@ -111,9 +111,22 @@ class HamiltonianHead(nn.Module):
 
     def energy(self, q: torch.Tensor, p: torch.Tensor,
                context: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """H(q,p) = T(p) + V(q | ctx).  (..., dim) -> (...,) scalar."""
-        v_in = q if context is None else torch.cat([q, context], dim=-1)
-        return self.T(p).squeeze(-1) + self.V(v_in).squeeze(-1)
+        """H(q,p) = T(p) + V(q | ctx).  (..., dim) -> (...) scalar per state.
+        Arbitrary leading dims are flattened internally (e.g. (k+1, B, dim)
+        rollout tensors); a (B, d) context is broadcast along the extra leading
+        dims first (same contract as OperatorHamiltonianHead.energy). The
+        output keeps ALL leading dims: (B, dim) -> (B,), (k+1, B, dim) -> (k+1, B)."""
+        lead = q.shape[:-1]
+        qf = q.reshape(-1, q.shape[-1])
+        pf = p.reshape(-1, p.shape[-1])
+        if context is not None:
+            # rollout flattening is (lead..., B, dim) -> (lead*B, dim) with B
+            # innermost, so tiling the (B, d) context lead-major realigns it
+            k = qf.shape[0] // context.shape[0]
+            v_in = torch.cat([qf, context.repeat(k, 1)], dim=-1)
+        else:
+            v_in = qf
+        return (self.T(pf).squeeze(-1) + self.V(v_in).squeeze(-1)).reshape(lead)
 
     def _grad(self, net: nn.Module, x: torch.Tensor,
               context: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -202,8 +215,16 @@ class FiLMHamiltonianHead(nn.Module):
 
     def energy(self, q: torch.Tensor, p: torch.Tensor,
                context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """T(p) + V(q | ctx) with FiLM; (..., dim) -> (...) per state. Leading
+        dims are flattened and the (B, d) context tiled along them (see
+        HamiltonianHead.energy)."""
         assert context is not None, "FiLMHamiltonianHead requires a context"
-        return self.T(p).squeeze(-1) + self.V(q, context).squeeze(-1)
+        lead = q.shape[:-1]
+        qf = q.reshape(-1, q.shape[-1])
+        pf = p.reshape(-1, p.shape[-1])
+        k = qf.shape[0] // context.shape[0]
+        return (self.T(pf).squeeze(-1)
+                + self.V(qf, context.repeat(k, 1)).squeeze(-1)).reshape(lead)
 
     def _grad(self, net, x: torch.Tensor,
               context: Optional[torch.Tensor] = None) -> torch.Tensor:

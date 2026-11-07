@@ -1,5 +1,9 @@
 """Tests for the liquid (LTC) substrate: the parallel scan and the LiquidCore
-multi-timescale recurrence."""
+multi-timescale recurrence.
+
+P0-4 traceability: the first FOUR tests are the v0.1 originals (commit a838d6c),
+name-unchanged — docs/test-traceability.md is the authoritative mapping.
+"""
 
 import sys
 from pathlib import Path

@@ -31,6 +31,7 @@ from awareliquid_physics.datasets import gen_nbody
 from awareliquid_physics.model import LiquidNBodyModel
 from awareliquid_physics.pairwise_potential import NBodyHamiltonianHead
 from awareliquid_physics.train import train_semigroup
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 class StaticNBodyWrapper(torch.nn.Module):
@@ -86,7 +87,7 @@ def evaluate(model, qs, vs, mass, t_obs, eval_k, dt, G, softening):
     E = _true_energy(qs_pred, vs_pred, mass, G, softening)   # (k+1, B)
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).max().item()
-    return mse, drift
+    return mse, drift, rollout_mse_stderr(qs_pred, q_true, vs_pred, v_true)
 
 
 def main():
@@ -144,7 +145,7 @@ def main():
 
     results = {}
     for name in ("liquid_nbody", "static_nbody"):
-        mses, drifts = [], []
+        mses, drifts, mse_ses = [], [], []
         n_par = sum(p.numel() for p in build(name, args.seed).parameters())
         for s in range(args.n_seeds):
             seed = args.seed + s
@@ -152,16 +153,18 @@ def main():
             floss = train_semigroup(model, qs[tr], vs[tr], args.t_obs, args.k_train,
                                     args.train_steps, args.lr, args.batch, seed,
                                     lr_decay=args.lr_decay)
-            mse, drift = evaluate(model, qs[ev], vs[ev], mass[ev], args.t_obs,
-                                  args.eval_k, args.dt, args.G, args.softening)
+            mse, drift, mse_se = evaluate(model, qs[ev], vs[ev], mass[ev], args.t_obs,
+                                          args.eval_k, args.dt, args.G, args.softening)
             mses.append(mse)
             drifts.append(drift)
+            mse_ses.append(mse_se)
         mse_mean = sum(mses) / len(mses)
         drift_mean = sum(drifts) / len(drifts)
         mse_std = (sum((m - mse_mean) ** 2 for m in mses) / len(mses)) ** 0.5
         drift_std = (sum((d - drift_mean) ** 2 for d in drifts) / len(drifts)) ** 0.5
         results[name] = {"params": n_par, "train_loss": floss,
                          "rollout_mse": mse_mean, "rollout_mse_std": mse_std,
+                         "rollout_mse_stderr": sum(mse_ses) / len(mse_ses),
                          "energy_drift_max": drift_mean,
                          "energy_drift_max_std": drift_std}
         print(f"  [{name:14s}] params {n_par:>6,} | n_seeds {args.n_seeds} | "
@@ -170,7 +173,8 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "nbody_eval.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "nbody_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
 
     lq, st = results["liquid_nbody"], results["static_nbody"]
     print("\n" + "=" * 70, flush=True)

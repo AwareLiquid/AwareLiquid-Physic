@@ -5,6 +5,10 @@ network" module rather than a soft penalty: symplectic energy stability and exac
 time-reversibility of the integrator, plus trainability. The "does structure beat
 an unstructured net on a real system" comparison lives in
 benchmarks/physics_rollout_eval.py (it needs training).
+
+P0-4 traceability: the first FIVE tests in this file are the v0.1 originals
+(commit a838d6c) and have kept their names ever since — see
+docs/test-traceability.md for the authoritative 13-test mapping.
 """
 
 import sys

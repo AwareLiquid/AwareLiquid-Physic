@@ -16,3 +16,11 @@ dev = ["pytest>=8.0"]
 
 [tool.setuptools]
 packages = ["awareliquid_physics"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "slow: long-running test; deselect with -m \"not slow\"",
+    "integration: end-to-end test running a benchmark CLI and auditing its result JSON",
+]

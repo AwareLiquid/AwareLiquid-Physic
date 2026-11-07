@@ -87,12 +87,18 @@ class NBodyHamiltonianHead(nn.Module):
 
     def energy(self, q: torch.Tensor, v: torch.Tensor,
                context: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """T(v) + V_pair(q | ctx); (..., N, dim) -> (...,). Leading dims are
+        flattened (e.g. (k+1, B, N, dim) rollout tensors) and a (B, d) context
+        is broadcast along them first (same contract as
+        OperatorHamiltonianHead.energy)."""
         lead = q.shape[:-2]
         qf = q.reshape(-1, *q.shape[-2:])
         vf = v.reshape(-1, *v.shape[-2:])
         t = 0.5 * vf.pow(2).sum(dim=(-1, -2))                # (B',)
         if context is not None:
-            cf = context.reshape(-1, context.shape[-1])
+            # rollout flattening is (lead..., B, N, dim) with B innermost, so
+            # tiling the (B, d) context lead-major realigns it
+            cf = context.repeat(qf.shape[0] // context.shape[0], 1)
         else:
             cf = None
         e = t + self.V(qf, cf)                               # (B',)

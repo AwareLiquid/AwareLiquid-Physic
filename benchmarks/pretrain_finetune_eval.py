@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from awareliquid_physics.datasets import gen_wave_1d
 from awareliquid_physics.model import LiquidOperatorHamiltonianModel
 from awareliquid_physics.train import finetune, train_pretrain, train_semigroup
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 def build_model(args, seed):
@@ -49,7 +50,8 @@ def evaluate(model, qs, ps, t_obs, eval_k, c):
     qs_pred, ps_pred = qs_pred.detach(), ps_pred.detach()
     q_true = qs[:, t_obs - 1: t_obs + eval_k].permute(1, 0, 2, 3)
     p_true = ps[:, t_obs - 1: t_obs + eval_k].permute(1, 0, 2, 3)
-    return ((qs_pred - q_true).pow(2).mean() + (ps_pred - p_true).pow(2).mean()).item()
+    mse = ((qs_pred - q_true).pow(2).mean() + (ps_pred - p_true).pow(2).mean()).item()
+    return mse, rollout_mse_stderr(qs_pred, q_true, ps_pred, p_true)
 
 
 def main():
@@ -113,9 +115,10 @@ def main():
     lf = finetune(model, qs_few, ps_few, args.t_obs, args.k_train,
                   args.finetune_steps, args.lr, args.batch, args.seed + 1,
                   lr_decay=args.lr_decay)
-    mse_ft = evaluate(model, qs_ev, ps_ev, args.t_obs, args.eval_k, args.c_target)
+    mse_ft, mse_ft_se = evaluate(model, qs_ev, ps_ev, args.t_obs, args.eval_k, args.c_target)
     results["pretrain_then_finetune"] = {"pretrain_loss": lp, "finetune_loss": lf,
-                                         "rollout_mse": mse_ft}
+                                         "rollout_mse": mse_ft,
+                                         "rollout_mse_stderr": mse_ft_se}
     print(f"  [pretrain->finetune] pre {lp:.4e} -> ft {lf:.4e} | "
           f"rollout_mse {mse_ft:.4e}", flush=True)
 
@@ -124,14 +127,16 @@ def main():
     ls = train_semigroup(model2, qs_few, ps_few, args.t_obs, args.k_train,
                          args.fromscratch_steps, args.lr, args.batch, args.seed + 2,
                          lr_decay=args.lr_decay)
-    mse_fs = evaluate(model2, qs_ev, ps_ev, args.t_obs, args.eval_k, args.c_target)
-    results["from_scratch"] = {"train_loss": ls, "rollout_mse": mse_fs}
+    mse_fs, mse_fs_se = evaluate(model2, qs_ev, ps_ev, args.t_obs, args.eval_k, args.c_target)
+    results["from_scratch"] = {"train_loss": ls, "rollout_mse": mse_fs,
+                               "rollout_mse_stderr": mse_fs_se}
     print(f"  [from scratch      ] loss {ls:.4e} | rollout_mse {mse_fs:.4e}",
           flush=True)
 
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "pretrain_finetune.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "pretrain_finetune_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
 
     print("\n" + "=" * 70, flush=True)
     print("PRETRAIN/FINETUNE | does pretraining buy few-shot adaptation?", flush=True)

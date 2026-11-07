@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from awareliquid_physics.datasets import gen_magnetic
 from awareliquid_physics.hamiltonian import NonseparableHamiltonianHead
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 def true_H(q, p, B):
@@ -99,11 +100,13 @@ def main():
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).max().item()
 
+    mse_se = rollout_mse_stderr(qs_pred, q_true, ps_pred, p_true)
     results = {"params": n_par, "train_loss": floss, "rollout_mse": mse,
-               "energy_drift_max": drift}
+               "rollout_mse_stderr": mse_se, "energy_drift_max": drift}
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "nonseparable_eval.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "nonseparable_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
     print(f"  params {n_par:>6,} | train_loss {floss:.4e} | rollout_mse {mse:.4e} "
           f"| energy_drift(max) {drift:.4e}", flush=True)
 

@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 
 from awareliquid_physics.hamiltonian import HamiltonianHead, MLPFieldHead
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +153,7 @@ def eval_rollout(head, qs, ps, k, dt, system, omega, meta):
     E0 = E[0].abs().clamp_min(1e-6)
     drift = ((E - E[0]).abs() / E0).mean(-1)        # (k+1,)
     return {"rollout_mse": rollout_mse,
+            "rollout_mse_stderr": rollout_mse_stderr(qroll, q_true, proll, p_true),
             "energy_drift_final": drift[-1].item(),
             "energy_drift_max": drift.max().item()}
 
@@ -207,7 +209,9 @@ def main():
               flush=True)
 
     os.makedirs(args.out_dir, exist_ok=True)
-    out = {"system": args.system, "args": vars(args), "results": results}
+    out = {"system": args.system, "args": vars(args),
+           "meta": run_metadata({"benchmark": "physics_rollout_eval", "device": "cpu"}),
+           "results": results}
     with open(os.path.join(args.out_dir, f"physics_rollout_{args.system}.json"), "w") as f:
         json.dump(out, f, indent=2)
 

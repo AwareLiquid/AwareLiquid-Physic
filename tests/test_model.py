@@ -3,7 +3,10 @@
 These pin the integration itself: the liquid core reads a prefix into a context,
 that context conditions the Hamiltonian potential, gradients flow end-to-end
 through BOTH the core and the physics head, and different prefixes produce
-different dynamics (system identification actually happens)."""
+different dynamics (system identification actually happens).
+
+P0-4 traceability: all FOUR tests here are the v0.1 originals (commit a838d6c),
+name-unchanged — docs/test-traceability.md is the authoritative mapping."""
 
 import sys
 from pathlib import Path

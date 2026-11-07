@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from awareliquid_physics.datasets import gen_driven
 from awareliquid_physics.hamiltonian import TimeConditionedHamiltonianHead
+from awareliquid_physics.observability import rollout_mse_stderr, run_metadata
 
 
 def main():
@@ -85,10 +86,12 @@ def main():
     mse = (qs_pred - q_true).pow(2).mean().item()
 
     results = {"params": sum(p.numel() for p in head.parameters()),
-               "rollout_mse": mse}
+               "rollout_mse": mse,
+               "rollout_mse_stderr": rollout_mse_stderr(qs_pred, q_true)}
     os.makedirs(args.out_dir, exist_ok=True)
     with open(os.path.join(args.out_dir, "time_eval.json"), "w") as f:
-        json.dump({"args": vars(args), "results": results}, f, indent=2)
+        json.dump({"args": vars(args), "meta": run_metadata({"benchmark": "time_eval",
+                   "device": args.device}), "results": results}, f, indent=2)
     print(f"  params {results['params']:>6,} | rollout_mse {mse:.4e}", flush=True)
 
 
